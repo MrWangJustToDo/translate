@@ -1,7 +1,5 @@
 import { createState } from "reactivity-store";
 
-import { useOllamaConfig } from "./useOllamaConfig";
-
 export const useOllamaStatus = createState(
   () => ({ state: false, connecting: false }) as { state: boolean; connecting: boolean },
   {
@@ -34,6 +32,16 @@ export const useOllamaStatus = createState(
           s.connecting = false;
         }
       },
+      setState: (state: boolean) => {
+        s.state = state;
+      },
+      setConnecting: (connecting: boolean) => {
+        s.connecting = connecting;
+      },
+      reset: () => {
+        s.state = false;
+        s.connecting = false;
+      }
     }),
     withDeepSelector: false,
     withStableSelector: true,

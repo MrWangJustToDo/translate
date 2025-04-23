@@ -18,8 +18,8 @@
     "@heroui/react": "2.7.5",
     "@langchain/core": "^0.3.43",
     "@langchain/ollama": "^0.2.0",
-    "@my-react/react": "^0.3.6",
-    "@my-react/react-dom": "^0.3.6",
+    "@my-react/react": "^0.3.8",
+    "@my-react/react-dom": "^0.3.8",
     "framer-motion": "^12.5.0",
     "langchain": "^0.3.19",
     "lucide-react": "^0.483.0",
@@ -29,8 +29,8 @@
     "swr": "^2.3.3"
   },
   "devDependencies": {
-    "@my-react/react-refresh": "^0.3.6",
-    "@my-react/react-vite": "^0.0.10",
+    "@my-react/react-refresh": "^0.3.8",
+    "@my-react/react-vite": "^0.0.12",
     "@types/chrome": "^0.0.313",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",

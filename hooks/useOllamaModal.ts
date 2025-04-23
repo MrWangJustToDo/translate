@@ -45,6 +45,20 @@ export const useOllamaModal = createState(
       setSelected: (selected?: string) => {
         s.selected = selected || "";
       },
+
+      setLoading: (loading: boolean) => {
+        s.loading = loading;
+      },
+
+      setList: (list: { label: string; key: string }[]) => {
+        s.list = list;
+      },
+
+      reset: () => {
+        s.list = [];
+        s.selected = "";
+        s.loading = false;
+      },
     }),
   }
 );
