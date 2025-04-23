@@ -12,5 +12,6 @@ export const useOllamaConfig = createState(() => ({ url: defaultUrl }), {
     },
   }),
   withDeepSelector: false,
+  withStableSelector: true,
   withPersist: "t-ollamaConfig",
 });
