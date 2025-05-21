@@ -1,3 +1,4 @@
+import { HeroUIProvider, ToastProvider } from "@heroui/react";
 import ReactDOM from "react-dom/client";
 
 import App from "./App";
@@ -26,7 +27,12 @@ export default defineContentScript({
         container.setAttribute("data-translate", "true");
 
         const root = ReactDOM.createRoot(container);
-        root.render(<App />);
+        root.render(
+          <HeroUIProvider>
+            <ToastProvider />
+            <App />
+          </HeroUIProvider>
+        );
         return root;
       },
       onRemove: (root?: Root) => {

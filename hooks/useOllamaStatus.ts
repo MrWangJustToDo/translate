@@ -1,5 +1,7 @@
 import { createState } from "reactivity-store";
 
+import { getOllamaApi } from "@/service/api";
+
 export const useOllamaStatus = createState(
   () => ({ state: false, connecting: false }) as { state: boolean; connecting: boolean },
   {
@@ -14,14 +16,9 @@ export const useOllamaStatus = createState(
         s.connecting = true;
 
         try {
-          const response = await fetch(`${url}/api/version`, {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-            },
-          });
+          const response = await getOllamaApi(`${url}/api/version`);
 
-          if (response.ok) {
+          if (response.data || !response.error) {
             s.state = true;
           } else {
             s.state = false;
@@ -41,7 +38,7 @@ export const useOllamaStatus = createState(
       reset: () => {
         s.state = false;
         s.connecting = false;
-      }
+      },
     }),
     withDeepSelector: false,
     withStableSelector: true,

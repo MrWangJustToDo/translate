@@ -1,4 +1,4 @@
-import { watch } from "reactivity-store";
+import { toRaw, watch } from "reactivity-store";
 
 export type SettingType = {
   url: string;
@@ -31,7 +31,7 @@ export const useSyncConfig = ({ side }: { side: "content" | "popup" }) => {
         const connecting = useOllamaStatus.getReactiveState().connecting;
         const selected = useOllamaModal.getReactiveState().selected;
         const loading = useOllamaModal.getReactiveState().loading;
-        const list = useOllamaModal.getReactiveState().list;
+        const list = toRaw(useOllamaModal.getReactiveState().list);
 
         await storage.setItem("local:ollama-translate", {
           url,

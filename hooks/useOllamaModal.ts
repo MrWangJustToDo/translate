@@ -1,5 +1,7 @@
 import { createState } from "reactivity-store";
 
+import { getOllamaApi } from "@/service/api";
+
 export const useOllamaModal = createState(
   () => ({ list: [] as { label: string; key: string }[], selected: "", loading: false }),
   {
@@ -16,15 +18,11 @@ export const useOllamaModal = createState(
         s.loading = true;
 
         try {
-          const response = await fetch(`${url}/api/tags`, {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-            },
-          });
+          const response = await getOllamaApi(`${url}/api/tags`);
 
-          if (response.ok) {
-            const data = await response.json();
+          if (response.data) {
+            const data = response.data;
+
             s.list = data.models.map((i: { name: string }) => ({ label: i.name, key: i.name }));
 
             s.selected = s.list[0]?.key || "";
