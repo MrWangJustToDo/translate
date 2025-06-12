@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@floating-ui/react':
+        specifier: ^0.27.12
+        version: 0.27.12(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@heroui/react':
         specifier: 2.7.5
         version: 2.7.5(@types/react@19.1.4)(framer-motion@12.6.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(tailwindcss@3.4.17)
@@ -18,11 +21,11 @@ importers:
         specifier: ^0.2.0
         version: 0.2.0(@langchain/core@0.3.56(openai@4.90.0(ws@8.18.1)(zod@3.24.2)))
       '@my-react/react':
-        specifier: ^0.3.9
-        version: 0.3.9
+        specifier: ^0.3.11
+        version: 0.3.11
       '@my-react/react-dom':
-        specifier: ^0.3.9
-        version: 0.3.9(@my-react/react@0.3.9)
+        specifier: ^0.3.11
+        version: 0.3.11(@my-react/react@0.3.11)
       framer-motion:
         specifier: ^12.5.0
         version: 12.6.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -46,11 +49,11 @@ importers:
         version: 2.3.3(react@19.1.0)
     devDependencies:
       '@my-react/react-refresh':
-        specifier: ^0.3.9
-        version: 0.3.9(@my-react/react@0.3.9)
+        specifier: ^0.3.11
+        version: 0.3.11(@my-react/react@0.3.11)
       '@my-react/react-vite':
-        specifier: ^0.0.13
-        version: 0.0.13(@my-react/react-refresh@0.3.9(@my-react/react@0.3.9))(vite@6.3.5(@types/node@22.13.14)(jiti@2.4.2)(terser@5.39.0)(yaml@2.7.0))
+        specifier: ^0.0.15
+        version: 0.0.15(@my-react/react-refresh@0.3.11(@my-react/react@0.3.11))(vite@6.3.5(@types/node@22.13.14)(jiti@2.4.2)(terser@5.39.0)(yaml@2.7.0))
       '@types/chrome':
         specifier: ^0.0.313
         version: 0.0.313
@@ -422,6 +425,27 @@ packages:
   '@eslint/js@8.57.1':
     resolution: {integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
+
+  '@floating-ui/core@1.7.1':
+    resolution: {integrity: sha512-azI0DrjMMfIug/ExbBaeDVJXcY0a7EPvPjb2xAJPa4HeimBX+Z18HK8QQR3jb6356SnDDdxx+hinMLcJEDdOjw==}
+
+  '@floating-ui/dom@1.7.1':
+    resolution: {integrity: sha512-cwsmW/zyw5ltYTUeeYJ60CnQuPqmGwuGVhG9w0PRaRKkAyi38BT5CKrpIbb+jtahSwUl04cWzSx9ZOIxeS6RsQ==}
+
+  '@floating-ui/react-dom@2.1.3':
+    resolution: {integrity: sha512-huMBfiU9UnQ2oBwIhgzyIiSpVgvlDstU8CX0AF+wS+KzmYMs0J2a3GwuFHV1Lz+jlrQGeC1fF+Nv0QoumyV0bA==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+
+  '@floating-ui/react@0.27.12':
+    resolution: {integrity: sha512-kKlWNrpIQxF1B/a2MZvE0/uyKby4960yjO91W7nVyNKmmfNi62xU9HCjL1M1eWzx/LFj/VPSwJVbwQk9Pq/68A==}
+    peerDependencies:
+      react: '>=17.0.0'
+      react-dom: '>=17.0.0'
+
+  '@floating-ui/utils@0.2.9':
+    resolution: {integrity: sha512-MDWhGtE+eHw5JW7lq4qhc5yRLS11ERl1c7Z6Xd0a58DozHES6EnNNwUWbMiG4J9Cgj053Bhk8zvlhFYKVhULwg==}
 
   '@formatjs/ecma402-abstract@2.3.4':
     resolution: {integrity: sha512-qrycXDeaORzIqNhBOx0btnhpD1c+/qFIHAN9znofuMJX6QBwtbrmlpWfD4oiUUD2vJUOIYFA/gYtg2KAMGG7sA==}
@@ -1050,29 +1074,29 @@ packages:
     peerDependencies:
       '@langchain/core': '>=0.2.21 <0.4.0'
 
-  '@my-react/react-dom@0.3.9':
-    resolution: {integrity: sha512-3ScBXuAZGSNlYC2c4mVvYXB7e/z03VrCHXMQBQ+I9r4AmecIArgWeXM5QIsCyhZKvhWQkk55a4dx8tJViCyMLg==}
+  '@my-react/react-dom@0.3.11':
+    resolution: {integrity: sha512-mw0DYZRHK27WljcN/EpQt0iBnXOToBTM3h9xApzlntdH647U99Yh1A0iiujAhE6MgI9j8BXYoJa69Wsq7EO8cQ==}
     peerDependencies:
-      '@my-react/react': '>=0.3.9'
+      '@my-react/react': '>=0.3.11'
 
-  '@my-react/react-jsx@0.3.9':
-    resolution: {integrity: sha512-V3IHPxagtTJZCIXWpeLrIXwq4iUsKFzal0CyhgMTZbXFhx8FhDO17cDWJm3uL9VbkobA9UmtaNv3XB7GZ5tK/g==}
+  '@my-react/react-jsx@0.3.11':
+    resolution: {integrity: sha512-m4TM44roVnOr+Oh9WSod69I3XDYjabaHYq9NCFjmCSGDfRsfQwdNG1oucqqiGitHVqyrfCqNdMMHpw4CUcQpJw==}
     peerDependencies:
-      '@my-react/react': '>=0.3.9'
+      '@my-react/react': '>=0.3.11'
 
-  '@my-react/react-refresh@0.3.9':
-    resolution: {integrity: sha512-OrSL5ZAlJZAIoxkqa1jcvD+gL5SLC4XpFf51vFajJ4Dfxt7RysnCGjLQFjP9OfOtK0twtQoDVE0CUad/DSfwSg==}
+  '@my-react/react-refresh@0.3.11':
+    resolution: {integrity: sha512-a7rAWFgXZClneUS1qg3S8IXKhTJojIsg3SqB1KMlvLD95SlaWthejD+d+1gTIROf9lc/aPh8NJNxdq2QXZn7yQ==}
     peerDependencies:
-      '@my-react/react': '>=0.3.9'
+      '@my-react/react': '>=0.3.11'
 
-  '@my-react/react-vite@0.0.13':
-    resolution: {integrity: sha512-J+tBfucac5WTX3YN5IfiBI2vkdioKge+lW6S2gWNdIKYjowxbPetSqJlsKhp1g8jukguT6rcGbRKzOPWuf4A7g==}
+  '@my-react/react-vite@0.0.15':
+    resolution: {integrity: sha512-7d2pfm2xOi1iyFDraiDQ1HdK+NuUFqR6RF/AskXBe/K60sHy2wHu8g4X/wBQ+zvBXR6fjckOMcZe0tdPCB0DYg==}
     peerDependencies:
-      '@my-react/react-refresh': '>=0.3.9'
+      '@my-react/react-refresh': '>=0.3.11'
       vite: ^4 || ^5 || ^6
 
-  '@my-react/react@0.3.9':
-    resolution: {integrity: sha512-utRdMnpMJ8ZF+stDFYt3UMLF1GrzevRlzdjXrAtSjKzX+OtwtcwbeNowKHTC5JfDSLfY1OAYcl55YBpBHNTplA==}
+  '@my-react/react@0.3.11':
+    resolution: {integrity: sha512-FJyQo67pPmjJs8LAvdcLlN7LOzLPFxohszafixoHrIfZBvlFmJt8e9SaNr6UAjXZTCKhHIaEv6ZrV0fagFbCTg==}
 
   '@napi-rs/wasm-runtime@0.2.7':
     resolution: {integrity: sha512-5yximcFK5FNompXfJFoWanu5l8v1hNGqNHh9du1xETp9HWk/B/PzvchX55WYOPaIeNglG8++68AAiauBAtbnzw==}
@@ -4947,6 +4971,9 @@ packages:
     resolution: {integrity: sha512-R1urvuyiTaWfeCggqEvpDJwAlDVdsT9NM+IP//Tk2x7qHCkSvBk/fwFgw/TLAHzZlrAnnazMcRw0ZD8HlYFTEQ==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
+  tabbable@6.2.0:
+    resolution: {integrity: sha512-Cat63mxsVJlzYvN51JmVXIgNoUokrIaT2zLclCXjRd8boZ0004U4KCs/sToJ75C6sdlByWxpYnb5Boif1VSFew==}
+
   table@6.9.0:
     resolution: {integrity: sha512-9kY+CygyYM6j02t5YFHbNz2FN5QmYGv9zAjVp4lCDjlCw7amdckXlEt/bjMhUIfj4ThGRE4gCUH5+yGnNuPo5A==}
     engines: {node: '>=10.0.0'}
@@ -5657,6 +5684,31 @@ snapshots:
       - supports-color
 
   '@eslint/js@8.57.1': {}
+
+  '@floating-ui/core@1.7.1':
+    dependencies:
+      '@floating-ui/utils': 0.2.9
+
+  '@floating-ui/dom@1.7.1':
+    dependencies:
+      '@floating-ui/core': 1.7.1
+      '@floating-ui/utils': 0.2.9
+
+  '@floating-ui/react-dom@2.1.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+    dependencies:
+      '@floating-ui/dom': 1.7.1
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
+
+  '@floating-ui/react@0.27.12(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+    dependencies:
+      '@floating-ui/react-dom': 2.1.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@floating-ui/utils': 0.2.9
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
+      tabbable: 6.2.0
+
+  '@floating-ui/utils@0.2.9': {}
 
   '@formatjs/ecma402-abstract@2.3.4':
     dependencies:
@@ -6873,31 +6925,31 @@ snapshots:
       '@langchain/core': 0.3.56(openai@4.90.0(ws@8.18.1)(zod@3.24.2))
       js-tiktoken: 1.0.19
 
-  '@my-react/react-dom@0.3.9(@my-react/react@0.3.9)':
+  '@my-react/react-dom@0.3.11(@my-react/react@0.3.11)':
     dependencies:
-      '@my-react/react': 0.3.9
+      '@my-react/react': 0.3.11
 
-  '@my-react/react-jsx@0.3.9(@my-react/react@0.3.9)':
+  '@my-react/react-jsx@0.3.11(@my-react/react@0.3.11)':
     dependencies:
-      '@my-react/react': 0.3.9
+      '@my-react/react': 0.3.11
 
-  '@my-react/react-refresh@0.3.9(@my-react/react@0.3.9)':
+  '@my-react/react-refresh@0.3.11(@my-react/react@0.3.11)':
     dependencies:
-      '@my-react/react': 0.3.9
+      '@my-react/react': 0.3.11
 
-  '@my-react/react-vite@0.0.13(@my-react/react-refresh@0.3.9(@my-react/react@0.3.9))(vite@6.3.5(@types/node@22.13.14)(jiti@2.4.2)(terser@5.39.0)(yaml@2.7.0))':
+  '@my-react/react-vite@0.0.15(@my-react/react-refresh@0.3.11(@my-react/react@0.3.11))(vite@6.3.5(@types/node@22.13.14)(jiti@2.4.2)(terser@5.39.0)(yaml@2.7.0))':
     dependencies:
       '@babel/core': 7.26.10
       '@babel/plugin-transform-react-jsx-self': 7.25.9(@babel/core@7.26.10)
       '@babel/plugin-transform-react-jsx-source': 7.25.9(@babel/core@7.26.10)
-      '@my-react/react-refresh': 0.3.9(@my-react/react@0.3.9)
+      '@my-react/react-refresh': 0.3.11(@my-react/react@0.3.11)
       vite: 6.3.5(@types/node@22.13.14)(jiti@2.4.2)(terser@5.39.0)(yaml@2.7.0)
     transitivePeerDependencies:
       - supports-color
 
-  '@my-react/react@0.3.9':
+  '@my-react/react@0.3.11':
     dependencies:
-      '@my-react/react-jsx': 0.3.9(@my-react/react@0.3.9)
+      '@my-react/react-jsx': 0.3.11(@my-react/react@0.3.11)
 
   '@napi-rs/wasm-runtime@0.2.7':
     dependencies:
@@ -11344,6 +11396,8 @@ snapshots:
     dependencies:
       '@pkgr/core': 0.2.0
       tslib: 2.8.1
+
+  tabbable@6.2.0: {}
 
   table@6.9.0:
     dependencies:
