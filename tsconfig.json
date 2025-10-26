@@ -1,7 +1,14 @@
 {
-  "extends": ["./.wxt/tsconfig.json"],
+  "extends": [
+    "./.wxt/tsconfig.json"
+  ],
   "compilerOptions": {
     "jsx": "react-jsx",
-    "esModuleInterop": true
-  }
+    "esModuleInterop": true,
+  },
+  "include": [
+    "**/*",
+    ".wxt/wxt.d.ts",
+    "./global.d.ts"
+  ]
 }

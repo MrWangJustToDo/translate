@@ -12,7 +12,7 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare && node init.mjs"
   },
   "dependencies": {
     "@floating-ui/react": "^0.27.16",

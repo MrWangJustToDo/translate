@@ -33,6 +33,15 @@ export default defineContentScript({
             <App />
           </HeroUIProvider>
         );
+
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        import("../../devtool").then(() => {
+          // window?.__MY_REACT_DEVTOOL_FORWARD__?.();
+        });
+
+        injectScript("/devtool/index.js");
+
         return root;
       },
       onRemove: (root?: Root) => {

@@ -11,6 +11,10 @@ export default defineConfig({
   },
   manifest: {
     permissions: ["storage", "activeTab"],
+    web_accessible_resources: [{
+      matches: ["<all_urls>"],
+      resources: ["devtool/index.js"],
+    }],
   },
   outDir: "dist",
   modules: ["@wxt-dev/module-react"],
