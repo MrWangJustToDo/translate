@@ -69,10 +69,12 @@ export const useSyncConfig = ({ side }: { side: "content" | "popup" }) => {
       init();
 
       const unwatch = storage.watch<SettingType>("local:ollama-translate", (newSettings) => {
+        console.log("Sync settings in content script:", newSettings);
         setSetting(newSettings);
         if (newSettings) {
           sync(newSettings);
         }
+        console.log("Sync completed.", useOllamaModal.getReadonlyState());
       });
 
       return () => unwatch();

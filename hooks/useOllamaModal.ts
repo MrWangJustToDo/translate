@@ -25,6 +25,8 @@ export const useOllamaModal = createState(
 
             s.list = data.models.map((i: { name: string }) => ({ label: i.name, key: i.name }));
 
+            if (s.selected && s.list.some(i => i.key === s.selected)) return;
+
             s.selected = s.list[0]?.key || "";
           } else {
             s.list = [];
@@ -58,5 +60,6 @@ export const useOllamaModal = createState(
         s.loading = false;
       },
     }),
+    withNamespace: "useOllamaModal",
   }
 );
