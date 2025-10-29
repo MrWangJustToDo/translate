@@ -10,6 +10,37 @@ const { check } = useOllamaStatus.getActions();
 
 const { loadList } = useOllamaModal.getActions();
 
+// get model capabilities symbol
+const getCapabilitiesSymbol = (capabilities: string[]) => {
+  const symbols: string[] = [];
+
+  if (capabilities.includes("embedding")) {
+    symbols.push("📊");
+  }
+
+  if (capabilities.includes("completion")) {
+    symbols.push("💬");
+  }
+
+  if (capabilities.includes("thinking")) {
+    symbols.push("🤔");
+  }
+
+  if (capabilities.includes("tools")) {
+    symbols.push("🛠️");
+  }
+
+  if (capabilities.includes("vision")) {
+    symbols.push("👁️");
+  }
+
+  if (capabilities.includes("audio")) {
+    symbols.push("🎵");
+  }
+
+  return symbols.join(" ");
+};
+
 function App() {
   const connect = useOllamaStatus((s) => s.state);
 
@@ -25,7 +56,7 @@ function App() {
 
   return (
     <div className="p-2">
-      <Card className="min-w-[200px]" radius="sm">
+      <Card className="min-w-[300px]" radius="sm">
         <CardHeader className="relative flex items-center justify-between">
           <Logo className={`w-[1.8em] ${connect ? "text-green-500" : "text-red-500"}`} />
           Ollama Translate
@@ -40,9 +71,14 @@ function App() {
             onSelectionChange={(s) => setSelected(s.currentKey)}
             label="Modal"
             isDisabled={!connect}
+            size="sm"
             placeholder="Select a modal"
           >
-            {(item) => <SelectItem>{item.label}</SelectItem>}
+            {(item) => (
+              <SelectItem textValue={item.label}>
+                {item.label} {getCapabilitiesSymbol(item.capabilities as string[])}
+              </SelectItem>
+            )}
           </Select>
         </CardBody>
       </Card>

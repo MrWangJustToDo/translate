@@ -91,6 +91,31 @@ export default defineBackground(() => {
       })();
     }
 
+    if (request.action === "postOllamaApi") {
+      (async function () {
+        const url = request.url;
+        const data = request.data;
+
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(data),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            sendResponse({ data: data });
+          } else {
+            sendResponse({ error: `Error: ${response.status} ${response.statusText}` });
+          }
+        } catch (error) {
+          sendResponse({ error: `Network error: ${(error as Error)?.message}` });
+        }
+      })();
+    }
+
     if (request.action === "translate") {
       (async function () {
         const model = list.find((i) => i.key === request.model);
