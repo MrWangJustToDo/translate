@@ -6,8 +6,10 @@ export type SettingType = {
   connecting: boolean;
   selected: string;
   loading: boolean;
-  list: { label: string; key: string }[];
+  list: { label: string; key: string; capabilities: string[] }[];
 };
+
+const defaultList: SettingType["list"] = [];
 
 export const getDefaultSettingConfig = (): SettingType => {
   return {
@@ -21,65 +23,115 @@ export const getDefaultSettingConfig = (): SettingType => {
 };
 
 export const useSyncConfig = ({ side }: { side: "content" | "popup" }) => {
-  const [setting, setSetting] = useState<SettingType | null>(null);
+  useEffect(() => {
+    if (side === "popup") {
+      const init = async () => {
+        const url = await storage.getItem<SettingType["url"]>("local:ollama-translate-url");
+
+        if (url) {
+          useOllamaConfig.getActions().setUrl(url);
+        }
+
+        const selected = await storage.getItem<SettingType["selected"]>("local:ollama-translate-selected");
+
+        if (selected) {
+          useOllamaModal.getActions().setSelected(selected);
+        }
+      };
+
+      init();
+
+      const handler = watch(async () => {
+        const url = useOllamaConfig.getReactiveState().url;
+
+        const selected = useOllamaModal.getReactiveState().selected;
+
+        await storage.setItem("local:ollama-translate-url", url);
+
+        await storage.setItem("local:ollama-translate-selected", selected);
+      });
+
+      return handler;
+    }
+  }, []);
 
   useEffect(() => {
     if (side === "popup") {
-      watch(async () => {
-        const url = useOllamaConfig.getReactiveState().url;
-        const state = useOllamaStatus.getReactiveState().state;
-        const connecting = useOllamaStatus.getReactiveState().connecting;
-        const selected = useOllamaModal.getReactiveState().selected;
-        const loading = useOllamaModal.getReactiveState().loading;
-        const list = toRaw(useOllamaModal.getReactiveState().list);
+      const init = async () => {
+        const list = await storage.getItem<SettingType["list"]>("local:ollama-translate-list");
 
-        await storage.setItem("local:ollama-translate", {
-          url,
-          state,
-          connecting,
-          selected,
-          loading,
-          list,
-        } as SettingType);
+        if (Array.isArray(list) && list.length > 0) {
+          useOllamaModal.getActions().setList(list);
+
+          return;
+        }
+
+        useOllamaModal.getActions().setList(defaultList);
+      };
+
+      init();
+
+      const unWatch = storage.watch<SettingType["list"]>("local:ollama-translate-list", (newValue) => {
+        if (Array.isArray(newValue) && newValue.length > 0) {
+          useOllamaModal.getActions().setList(newValue);
+
+          return;
+        }
+
+        useOllamaModal.getActions().setList(defaultList);
       });
+
+      return unWatch;
     }
   }, []);
 
   useEffect(() => {
-    const sync = (newSettings: SettingType) => {
-      useOllamaConfig.getActions().setUrl(newSettings.url);
-      useOllamaStatus.getActions().setState(newSettings.state);
-      useOllamaStatus.getActions().setConnecting(newSettings.connecting);
-      useOllamaModal.getActions().setSelected(newSettings.selected);
-      useOllamaModal.getActions().setLoading(newSettings.loading);
-      useOllamaModal.getActions().setList(newSettings.list);
-    }
-
-    const init = async () => {
-      const config = await storage.getItem<SettingType>("local:ollama-translate");
-      const defaultConfig = getDefaultSettingConfig();
-      const targetConfig = { ...defaultConfig, ...config };
-      if (targetConfig) {
-        setSetting(targetConfig);
-        sync(targetConfig);
-      }
-    };
-
     if (side === "content") {
-      init();
+      const init = async () => {
+        const list = useOllamaModal.getReactiveState().list;
 
-      const unwatch = storage.watch<SettingType>("local:ollama-translate", (newSettings) => {
-        console.log("Sync settings in content script:", newSettings);
-        setSetting(newSettings);
-        if (newSettings) {
-          sync(newSettings);
-        }
-        console.log("Sync completed.", useOllamaModal.getReadonlyState());
-      });
+        await storage.setItem("local:ollama-translate-list", toRaw(list));
+      };
 
-      return () => unwatch();
+      const handler = watch(init);
+
+      return handler;
     }
   }, []);
 
-  return setting;
+  useEffect(() => {
+    if (side === "content") {
+      const init = async () => {
+        const url = await storage.getItem<SettingType["url"]>("local:ollama-translate-url");
+
+        useOllamaConfig.getActions().setUrl(url || defaultUrl);
+      };
+
+      init();
+
+      const unWatch = storage.watch<SettingType["url"]>("local:ollama-translate-url", (newValue) => {
+        useOllamaConfig.getActions().setUrl(newValue || defaultUrl);
+      });
+
+      return unWatch;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (side === "content") {
+      const init = async () => {
+        const selected = await storage.getItem<SettingType["selected"]>("local:ollama-translate-selected");
+
+        useOllamaModal.getActions().setSelected(selected || "");
+      };
+
+      init();
+
+      const unWatch = storage.watch<SettingType["selected"]>("local:ollama-translate-selected", (newValue) => {
+        useOllamaModal.getActions().setSelected(newValue || "");
+      });
+
+      return unWatch;
+    }
+  }, []);
 };

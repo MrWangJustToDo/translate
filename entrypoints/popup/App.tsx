@@ -8,39 +8,6 @@ import { useSyncConfig } from "@/hooks/useSyncConfig";
 
 const { check } = useOllamaStatus.getActions();
 
-const { loadList } = useOllamaModal.getActions();
-
-// get model capabilities symbol
-const getCapabilitiesSymbol = (capabilities: string[]) => {
-  const symbols: string[] = [];
-
-  if (capabilities.includes("embedding")) {
-    symbols.push("📊");
-  }
-
-  if (capabilities.includes("completion")) {
-    symbols.push("💬");
-  }
-
-  if (capabilities.includes("thinking")) {
-    symbols.push("🤔");
-  }
-
-  if (capabilities.includes("tools")) {
-    symbols.push("🛠️");
-  }
-
-  if (capabilities.includes("vision")) {
-    symbols.push("👁️");
-  }
-
-  if (capabilities.includes("audio")) {
-    symbols.push("🎵");
-  }
-
-  return symbols.join(" ");
-};
-
 function App() {
   const connect = useOllamaStatus((s) => s.state);
 
@@ -49,8 +16,6 @@ function App() {
   const { selected, setSelected, list } = useOllamaModal();
 
   useSWR(`state-${url}`, check);
-
-  useSWR(`list-${url}-${connect}`, loadList);
 
   useSyncConfig({ side: "popup" });
 
@@ -76,7 +41,7 @@ function App() {
           >
             {(item) => (
               <SelectItem textValue={item.label}>
-                {item.label} {getCapabilitiesSymbol(item.capabilities as string[])}
+                {item.label}
               </SelectItem>
             )}
           </Select>

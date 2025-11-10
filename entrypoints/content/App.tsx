@@ -40,7 +40,9 @@ export default function App() {
 
   const status = useOllamaStatus((s) => s.state);
 
-  const { selected } = useSyncConfig({ side: "content" }) || {};
+  const selected = useOllamaModal((s) => s.selected);
+
+  useSyncConfig({ side: "content" });
 
   const { state, setText } = useSelectText();
 
@@ -106,7 +108,7 @@ export default function App() {
     setLoading(false);
   };
 
-  if (!status || !url) return null;
+  if (!status || !url || !selected) return null;
 
   return (
     <div ref={ref} data-popover>
