@@ -704,6 +704,7 @@
     		    MessagePanelType["enableUpdate"] = "panel-enable-update";
     		    MessagePanelType["enableRetrigger"] = "panel-enable-retrigger";
     		    MessagePanelType["enableHoverOnBrowser"] = "panel-enable-hover-on-browser";
+    		    MessagePanelType["enableRecord"] = "panel-enable-record";
     		    MessagePanelType["nodeHover"] = "panel-hover";
     		    MessagePanelType["nodeSelect"] = "panel-select";
     		    MessagePanelType["nodeStore"] = "panel-store";
@@ -749,6 +750,7 @@
     		    DevToolMessageEnum["error"] = "error";
     		    DevToolMessageEnum["errorStatus"] = "errorStatus";
     		    DevToolMessageEnum["chunks"] = "chunks";
+    		    DevToolMessageEnum["record"] = "record";
     		    DevToolMessageEnum["domHover"] = "dom-hover";
     		})(exports.DevToolMessageEnum || (exports.DevToolMessageEnum = {}));
     		exports.HMRStatus = void 0;
@@ -1823,7 +1825,7 @@
     		    }
     		    return null;
     		};
-    		var getTree = function (fiber) {
+    		var getTree$1 = function (fiber) {
     		    var tree = [];
     		    var current = fiber;
     		    var parent = current === null || current === void 0 ? void 0 : current.parent;
@@ -3076,7 +3078,7 @@
     		    shallowAssignFiber(plain, fiber);
     		    plain.p = getProps(fiber);
     		    plain._s = getSource(fiber);
-    		    plain._t = getTree(fiber);
+    		    plain._t = getTree$1(fiber);
     		    plain._h = getHook(fiber);
     		    if (fiber.type & exports.NODE_TYPE.__class__) {
     		        plain.s = getState(fiber);
@@ -3292,35 +3294,9 @@
     		var getFiberNodeById = function (id) {
     		    return fiberStore.get(id);
     		};
-
-    		/* eslint-disable @typescript-eslint/no-unsafe-function-type */
-    		var debounce = function (callback, time) {
-    		    var id = null;
-    		    return (function () {
-    		        var args = [];
-    		        for (var _i = 0; _i < arguments.length; _i++) {
-    		            args[_i] = arguments[_i];
-    		        }
-    		        clearTimeout(id);
-    		        id = setTimeout(function () {
-    		            callback.call.apply(callback, __spreadArray([null], args, false));
-    		        }, time || 40);
-    		    });
-    		};
-    		var throttle = function (callback, time) {
-    		    var id = null;
-    		    return (function () {
-    		        var args = [];
-    		        for (var _i = 0; _i < arguments.length; _i++) {
-    		            args[_i] = arguments[_i];
-    		        }
-    		        if (id)
-    		            return;
-    		        id = setTimeout(function () {
-    		            callback.call.apply(callback, __spreadArray([null], args, false));
-    		            id = null;
-    		        }, time || 40);
-    		    });
+    		var getDirectoryIdByFiber = function (fiber) {
+    		    var name = getFiberName(fiber);
+    		    return directory[name];
     		};
 
     		// browser platform inspect
@@ -3381,6 +3357,37 @@
     		    }
     		    core.notifyMessage("current id: ".concat(core._selectId, " of fiber not contain dom node"), "warning");
     		};
+
+    		/* eslint-disable @typescript-eslint/no-unsafe-function-type */
+    		var debounce = function (callback, time) {
+    		    var id = null;
+    		    return (function () {
+    		        var args = [];
+    		        for (var _i = 0; _i < arguments.length; _i++) {
+    		            args[_i] = arguments[_i];
+    		        }
+    		        clearTimeout(id);
+    		        id = setTimeout(function () {
+    		            callback.call.apply(callback, __spreadArray([null], args, false));
+    		        }, time || 40);
+    		    });
+    		};
+    		var throttle = function (callback, time) {
+    		    var id = null;
+    		    return (function () {
+    		        var args = [];
+    		        for (var _i = 0; _i < arguments.length; _i++) {
+    		            args[_i] = arguments[_i];
+    		        }
+    		        if (id)
+    		            return;
+    		        id = setTimeout(function () {
+    		            callback.call.apply(callback, __spreadArray([null], args, false));
+    		            id = null;
+    		        }, time || 40);
+    		    });
+    		};
+
     		var cb = function () { };
     		var enableBrowserHover = function (core) {
     		    if (!core.hasEnable)
@@ -3392,7 +3399,7 @@
     		    }
     		    core._enableHoverOnBrowser = true;
     		    core.select.remove();
-    		    var debounceNotifyDomHover = debounce(function () {
+    		    var debounceNotifyDomClick = debounce(function () {
     		        core.notifyDomHover();
     		        core.disableBrowserHover();
     		        core.notifyConfig();
@@ -3416,7 +3423,7 @@
     		        if (!core.hasEnable)
     		            return;
     		        core._domHoverId = core._tempDomHoverId;
-    		        debounceNotifyDomHover();
+    		        debounceNotifyDomClick();
     		        e.stopPropagation();
     		        e.preventDefault();
     		    };
@@ -3437,6 +3444,28 @@
     		    if (!core._enableHoverOnBrowser)
     		        return;
     		    cb();
+    		};
+    		var setHoverStatus = function (core, d) {
+    		    if (!core.hasEnable)
+    		        return;
+    		    core._enableHover = d;
+    		};
+
+    		var setUpdateStatus = function (core, d) {
+    		    if (!core._enabled)
+    		        return;
+    		    core._enableUpdate = d;
+    		    if (!core._enableUpdate) {
+    		        core.update.cancelPending();
+    		    }
+    		};
+
+    		var setRetriggerStatus = function (core, d) {
+    		    if (!core._enabled)
+    		        return;
+    		    core._enableRetrigger = d;
+    		    core.notifyTrigger();
+    		    core.notifyTriggerStatus();
     		};
 
     		exports.MessageHookType = void 0;
@@ -3465,6 +3494,7 @@
     		    MessagePanelType["enableUpdate"] = "panel-enable-update";
     		    MessagePanelType["enableRetrigger"] = "panel-enable-retrigger";
     		    MessagePanelType["enableHoverOnBrowser"] = "panel-enable-hover-on-browser";
+    		    MessagePanelType["enableRecord"] = "panel-enable-record";
     		    MessagePanelType["nodeHover"] = "panel-hover";
     		    MessagePanelType["nodeSelect"] = "panel-select";
     		    MessagePanelType["nodeStore"] = "panel-store";
@@ -3510,6 +3540,7 @@
     		    DevToolMessageEnum["error"] = "error";
     		    DevToolMessageEnum["errorStatus"] = "errorStatus";
     		    DevToolMessageEnum["chunks"] = "chunks";
+    		    DevToolMessageEnum["record"] = "record";
     		    DevToolMessageEnum["domHover"] = "dom-hover";
     		})(exports.DevToolMessageEnum || (exports.DevToolMessageEnum = {}));
     		exports.HMRStatus = void 0;
@@ -3520,11 +3551,11 @@
     		})(exports.HMRStatus || (exports.HMRStatus = {}));
     		var DevToolSource = "@my-react/devtool";
 
-    		var patchDispatch = function (dispatch, runtime) {
+    		var patchEvent = function (dispatch, runtime) {
     		    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
-    		    if (dispatch["$$hasDevToolPatch"])
+    		    if (dispatch["$$hasDevToolEvent"])
     		        return;
-    		    dispatch["$$hasDevToolPatch"] = true;
+    		    dispatch["$$hasDevToolEvent"] = true;
     		    var onLoad = throttle(function () {
     		        if (!runtime.hasEnable)
     		            return;
@@ -3710,6 +3741,171 @@
     		            onUnmount();
     		        };
     		    }
+    		};
+
+    		var checkIsValidDispatchVersion = function (dispatch) {
+    		    var _a;
+    		    var version = ((_a = dispatch.version) === null || _a === void 0 ? void 0 : _a.split(".").map(function (v) { return parseInt(v, 10); })) || [];
+    		    if (version.length !== 3)
+    		        return false;
+    		    if (version[1] < 3)
+    		        return false;
+    		    if (version[2] >= 21)
+    		        return true;
+    		    return false;
+    		};
+    		var checkIsComponent = function (fiber) {
+    		    return reactShared.include(fiber.type, exports.NODE_TYPE.__class__ | exports.NODE_TYPE.__function__);
+    		};
+    		var checkIsConCurrent = function (dispatch, list) {
+    		    return dispatch.enableConcurrentMode && list.every(function (f) { return reactShared.include(f.state, reactShared.STATE_TYPE.__triggerConcurrent__ | reactShared.STATE_TYPE.__triggerConcurrentForce__); });
+    		};
+    		var getCurrent = function () { return (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) * 1000; };
+    		var resetArray = [];
+    		var patchRecord = function (dispatch, runtime) {
+    		    if (!checkIsValidDispatchVersion(dispatch))
+    		        return;
+    		    if (dispatch.mode !== "development")
+    		        return;
+    		    runtime._supportRecord = true;
+    		    var stack = [];
+    		    var map = {};
+    		    var mode = "legacy";
+    		    var id = "";
+    		    var current = null;
+    		    if (dispatch["$$hasDevToolRecord"])
+    		        return;
+    		    dispatch["$$hasDevToolRecord"] = true;
+    		    dispatch.onBeforeDispatchUpdate(function (_, list) {
+    		        if (!runtime._enableRecord)
+    		            return;
+    		        current = null;
+    		        stack.length = 0;
+    		        map = {};
+    		        mode = checkIsConCurrent(dispatch, list) ? "concurrent" : "legacy";
+    		        id = dispatch.id;
+    		    });
+    		    dispatch.onBeforeFiberRun(function (fiber) {
+    		        if (!runtime._enableRecord)
+    		            return;
+    		        if (!checkIsComponent(fiber))
+    		            return;
+    		        var nodeId = getPlainNodeIdByFiber(fiber);
+    		        if (nodeId === null)
+    		            return;
+    		        map[nodeId] = true;
+    		        // rerun check
+    		        if (current && current.i === nodeId) {
+    		            current.r = (current.r || 0) + 1;
+    		            return;
+    		        }
+    		        var node = {
+    		            i: nodeId,
+    		            n: getDirectoryIdByFiber(fiber),
+    		            s: getCurrent(),
+    		        };
+    		        if (current) {
+    		            current.c = current.c || [];
+    		            current.c.push(node);
+    		        }
+    		        stack.push(node);
+    		        current = node;
+    		    });
+    		    dispatch.onAfterFiberDone(function (fiber) {
+    		        if (!runtime._enableRecord)
+    		            return;
+    		        if (!checkIsComponent(fiber))
+    		            return;
+    		        var nodeId = getPlainNodeIdByFiber(fiber);
+    		        if (nodeId === null)
+    		            return;
+    		        if (!map[nodeId]) {
+    		            return;
+    		        }
+    		        var stackTop = stack.pop();
+    		        while (stackTop && stackTop.i !== nodeId) {
+    		            stackTop = stack.pop();
+    		        }
+    		        if (!stackTop)
+    		            return;
+    		        stackTop.e = getCurrent();
+    		        stackTop.d = Math.max(Math.floor(stackTop.e - stackTop.s), 1);
+    		        current = stack[stack.length - 1] || null;
+    		        if (!current) {
+    		            runtime._stack.push({ stack: stackTop, id: id, mode: mode });
+    		        }
+    		    });
+    		    var reset = function () {
+    		        stack.length = 0;
+    		        current = null;
+    		        map = {};
+    		    };
+    		    resetArray.push(reset);
+    		    runtime.startRecord = function () {
+    		        if (!runtime._supportRecord)
+    		            return;
+    		        runtime._enableRecord = true;
+    		        runtime._stack.length = 0;
+    		        resetArray.forEach(function (r) { return r(); });
+    		    };
+    		    runtime.stopRecord = function () {
+    		        if (!runtime._supportRecord)
+    		            return;
+    		        runtime._enableRecord = false;
+    		        runtime.notifyRecordStack();
+    		        resetArray.forEach(function (r) { return r(); });
+    		    };
+    		};
+    		var getRecord = function (runtime) {
+    		    if (!runtime._enabled)
+    		        return [];
+    		    var stack = runtime._stack;
+    		    return stack;
+    		};
+
+    		var getTree = function (dispatch, runtime) {
+    		    var _a = inspectDispatch(dispatch), directory = _a.directory, current = _a.current;
+    		    runtime._map.set(dispatch, current);
+    		    if (!reactShared.isNormalEquals(runtime._dir, directory)) {
+    		        runtime._dir = __assign({}, directory);
+    		        return { directory: directory, current: current };
+    		    }
+    		    return { current: current };
+    		};
+    		var getValidTrigger = function (runtime) {
+    		    return Object.keys(runtime._trigger).reduce(function (p, c) {
+    		        var t = runtime._trigger[c];
+    		        var f = t.filter(function (i) { return (i.isRetrigger ? runtime._enableRetrigger : true); });
+    		        p[c] = f.length;
+    		        return p;
+    		    }, {});
+    		};
+    		var getValidTriggerStatus = function (id, runtime) {
+    		    var status = runtime._trigger[id];
+    		    if (!status)
+    		        return;
+    		    var finalStatus = status.filter(function (i) { return (i.isRetrigger ? runtime._enableRetrigger : true); }).slice(-10);
+    		    return finalStatus.map(function (i) {
+    		        var _keysToLinkHook = getHookIndexFromState(i);
+    		        var node = getNode(i);
+    		        if (_keysToLinkHook && _keysToLinkHook.length > 0) {
+    		            node._keysToLinkHook = _keysToLinkHook;
+    		        }
+    		        return node;
+    		    });
+    		};
+    		var getMapValueLengthObject = function (map) {
+    		    return Object.keys(map).reduce(function (p, c) {
+    		        p[c] = map[c].length;
+    		        return p;
+    		    }, {});
+    		};
+    		var getChunkDataFromIds = function (ids) {
+    		    return ids.reduce(function (p, c) {
+    		        var d = getNodeFromId(Number(c));
+    		        p[c] = { loaded: d };
+    		        return p;
+    		    }, {});
     		};
 
     		// TODO use 'eventListener' instead of 'patchFunction'
@@ -4165,7 +4361,7 @@
     		        var color = _a.color, rect = _a.rect;
     		        context.beginPath();
     		        context.strokeStyle = color;
-    		        context.rect(rect.left, rect.top, rect.width - 1, rect.height - 1);
+    		        context.rect(rect.left - 1, rect.top, rect.width - 1, rect.height - 1);
     		        context.stroke();
     		    });
     		}
@@ -4209,7 +4405,7 @@
     		    var metrics = context.measureText(text);
     		    var backgroundWidth = metrics.width + padding * 2;
     		    var backgroundHeight = textHeight;
-    		    var labelX = left;
+    		    var labelX = left - 1;
     		    var labelY = top - backgroundHeight;
     		    context.fillStyle = color;
     		    context.fillRect(labelX, labelY, backgroundWidth, backgroundHeight);
@@ -4368,6 +4564,7 @@
     		        this._origin = "";
     		        this._map = new Map();
     		        this._timeMap = new Map();
+    		        this._stack = [];
     		        // 字符串字典
     		        this._dir = {};
     		        this._hmr = {};
@@ -4387,6 +4584,8 @@
     		        // 在开发工具中选中组件定位到浏览器中
     		        this._enableHover = false;
     		        this._enableUpdate = false;
+    		        this._enableRecord = false;
+    		        this._supportRecord = false;
     		        // 在浏览器中选中dom定位到开发工具组件树中
     		        this._enableHoverOnBrowser = false;
     		        // 显示Retrigger的触发状态
@@ -4432,11 +4631,7 @@
     		        configurable: true
     		    });
     		    DevToolCore.prototype.setHoverStatus = function (d) {
-    		        this._enableHover = d;
-    		    };
-    		    DevToolCore.prototype.setHoverOnBrowserStatus = function (d, cb) {
-    		        this._enableHoverOnBrowser = d;
-    		        cb === null || cb === void 0 ? void 0 : cb(d);
+    		        setHoverStatus(this, d);
     		    };
     		    DevToolCore.prototype.enableBrowserHover = function () {
     		        enableBrowserHover(this);
@@ -4445,15 +4640,10 @@
     		        disableBrowserHover(this);
     		    };
     		    DevToolCore.prototype.setUpdateStatus = function (d) {
-    		        this._enableUpdate = d;
-    		        if (!this._enableUpdate) {
-    		            this.update.cancelPending();
-    		        }
+    		        setUpdateStatus(this, d);
     		    };
     		    DevToolCore.prototype.setRetriggerStatus = function (d) {
-    		        this._enableRetrigger = d;
-    		        this.notifyTrigger();
-    		        this.notifyTriggerStatus();
+    		        setRetriggerStatus(this, d);
     		    };
     		    DevToolCore.prototype.addDispatch = function (dispatch) {
     		        if (dispatch)
@@ -4465,7 +4655,8 @@
     		        this.patchDispatch(dispatch);
     		    };
     		    DevToolCore.prototype.patchDispatch = function (dispatch) {
-    		        patchDispatch(dispatch, this);
+    		        patchEvent(dispatch, this);
+    		        patchRecord(dispatch, this);
     		    };
     		    DevToolCore.prototype.hasDispatch = function (dispatch) {
     		        return this._dispatch.has(dispatch);
@@ -4486,15 +4677,6 @@
     		    DevToolCore.prototype._notify = function (data) {
     		        var _this = this;
     		        this._listeners.forEach(function (listener) { return listener(__assign(__assign({}, data), { agentId: _this.id })); });
-    		    };
-    		    DevToolCore.prototype.getTree = function (dispatch) {
-    		        var _a = inspectDispatch(dispatch), directory = _a.directory, current = _a.current;
-    		        if (!reactShared.isNormalEquals(this._dir, directory)) {
-    		            this._dir = __assign({}, directory);
-    		            this.notifyDir();
-    		        }
-    		        this._map.set(dispatch, current);
-    		        return current;
     		    };
     		    DevToolCore.prototype.setSelect = function (id) {
     		        var fiber = getFiberNodeById(id);
@@ -4569,39 +4751,21 @@
     		        this._notify({ type: exports.DevToolMessageEnum.init, data: this._detector });
     		    };
     		    DevToolCore.prototype.notifyTrigger = function () {
-    		        var _this = this;
     		        if (!this.hasEnable)
     		            return;
-    		        var state = Object.keys(this._trigger).reduce(function (p, c) {
-    		            var t = _this._trigger[c];
-    		            var f = t.filter(function (i) { return (i.isRetrigger ? _this._enableRetrigger : true); });
-    		            p[c] = f.length;
-    		            return p;
-    		        }, {});
+    		        var state = getValidTrigger(this);
     		        this._notify({ type: exports.DevToolMessageEnum.trigger, data: state });
     		    };
     		    DevToolCore.prototype.notifyTriggerStatus = function () {
-    		        var _this = this;
     		        if (!this.hasEnable)
     		            return;
     		        var id = this._selectId;
     		        if (!id)
     		            return;
-    		        var status = this._trigger[id];
-    		        if (!status)
+    		        var state = getValidTriggerStatus(id, this);
+    		        if (!state)
     		            return;
-    		        var finalStatus = status.filter(function (i) { return (i.isRetrigger ? _this._enableRetrigger : true); }).slice(-10);
-    		        this._notify({
-    		            type: exports.DevToolMessageEnum.triggerStatus,
-    		            data: finalStatus.map(function (i) {
-    		                var _keysToLinkHook = getHookIndexFromState(i);
-    		                var node = getNode(i);
-    		                if (_keysToLinkHook && _keysToLinkHook.length > 0) {
-    		                    node._keysToLinkHook = _keysToLinkHook;
-    		                }
-    		                return node;
-    		            }),
-    		        });
+    		        this._notify({ type: exports.DevToolMessageEnum.triggerStatus, data: state });
     		    };
     		    DevToolCore.prototype.notifyHighlight = function (id, type) {
     		        if (!this.hasEnable)
@@ -4609,15 +4773,11 @@
     		        this._notify({ type: exports.DevToolMessageEnum.highlight, data: { id: id, type: type } });
     		    };
     		    DevToolCore.prototype.notifyWarn = function () {
-    		        var _this = this;
     		        if (!this.hasEnable)
     		            return;
     		        this._notify({
     		            type: exports.DevToolMessageEnum.warn,
-    		            data: Object.keys(this._warn).reduce(function (p, c) {
-    		                p[c] = _this._warn[c].length;
-    		                return p;
-    		            }, {}),
+    		            data: getMapValueLengthObject(this._warn),
     		        });
     		    };
     		    DevToolCore.prototype.notifyWarnStatus = function () {
@@ -4633,15 +4793,11 @@
     		        this._notify({ type: exports.DevToolMessageEnum.warnStatus, data: finalStatus.map(function (i) { return getNode(i); }) });
     		    };
     		    DevToolCore.prototype.notifyError = function () {
-    		        var _this = this;
     		        if (!this.hasEnable)
     		            return;
     		        this._notify({
     		            type: exports.DevToolMessageEnum.error,
-    		            data: Object.keys(this._error).reduce(function (p, c) {
-    		                p[c] = _this._error[c].length;
-    		                return p;
-    		            }, {}),
+    		            data: getMapValueLengthObject(this._error),
     		        });
     		    };
     		    DevToolCore.prototype.notifyErrorStatus = function () {
@@ -4664,14 +4820,9 @@
     		        this._notify({ type: exports.DevToolMessageEnum.ready, data: tree });
     		    };
     		    DevToolCore.prototype.notifyHMR = function () {
-    		        var _this = this;
     		        if (!this.hasEnable)
     		            return;
-    		        var state = Object.keys(this._hmr).reduce(function (p, c) {
-    		            p[c] = _this._hmr[c].length;
-    		            return p;
-    		        }, {});
-    		        this._notify({ type: exports.DevToolMessageEnum.hmr, data: state });
+    		        this._notify({ type: exports.DevToolMessageEnum.hmr, data: getMapValueLengthObject(this._hmr) });
     		    };
     		    DevToolCore.prototype.notifyHMRStatus = function () {
     		        if (!this.hasEnable)
@@ -4702,6 +4853,8 @@
     		                enableHover: this._enableHover,
     		                enableUpdate: this._enableUpdate,
     		                enableRetrigger: this._enableRetrigger,
+    		                enableRecord: this._enableRecord,
+    		                supportRecord: this._supportRecord,
     		                enableHoverOnBrowser: this._enableHoverOnBrowser,
     		            },
     		        });
@@ -4747,11 +4900,7 @@
     		    DevToolCore.prototype.notifyChunks = function (ids) {
     		        if (!this.hasEnable)
     		            return;
-    		        var data = ids.reduce(function (p, c) {
-    		            var d = getNodeFromId(Number(c));
-    		            p[c] = { loaded: d };
-    		            return p;
-    		        }, {});
+    		        var data = getChunkDataFromIds(ids);
     		        this._notify({ type: exports.DevToolMessageEnum.chunks, data: data });
     		    };
     		    DevToolCore.prototype.notifyEditor = function (params) {
@@ -4779,18 +4928,30 @@
     		            var now = Date.now();
     		            if (force) {
     		                this._timeMap.set(dispatch, now);
-    		                var tree = this.getTree(dispatch);
-    		                this._notify({ type: exports.DevToolMessageEnum.ready, data: tree });
+    		                var _a = getTree(dispatch, this), current = _a.current, directory = _a.directory;
+    		                if (directory)
+    		                    this.notifyDir();
+    		                this._notify({ type: exports.DevToolMessageEnum.ready, data: current });
     		            }
     		            else {
     		                var last = this._timeMap.get(dispatch);
     		                if (last && now - last < 200)
     		                    return;
     		                this._timeMap.set(dispatch, now);
-    		                var tree = this.getTree(dispatch);
-    		                this._notify({ type: exports.DevToolMessageEnum.ready, data: tree });
+    		                var _b = getTree(dispatch, this), current = _b.current, directory = _b.directory;
+    		                if (directory)
+    		                    this.notifyDir();
+    		                this._notify({ type: exports.DevToolMessageEnum.ready, data: current });
     		            }
     		        }
+    		    };
+    		    DevToolCore.prototype.notifyRecordStack = function () {
+    		        var _this = this;
+    		        if (!this.hasEnable)
+    		            return;
+    		        var data = getRecord(this);
+    		        data.map(function (item) { return _this._notify({ type: exports.DevToolMessageEnum.record, data: item }); });
+    		        this._notify({ type: exports.DevToolMessageEnum.record, data: true });
     		    };
     		    // TODO support multiple connect agent
     		    DevToolCore.prototype.connect = function () {
@@ -4805,6 +4966,8 @@
     		        this.update.cancelPending();
     		        this._enabled = false;
     		    };
+    		    DevToolCore.prototype.startRecord = function () { };
+    		    DevToolCore.prototype.stopRecord = function () { };
     		    DevToolCore.prototype.clear = function () {
     		        this._error = {};
     		        this._hmr = {};
@@ -4819,6 +4982,7 @@
     		        this._warn = {};
     		        this._enableHoverOnBrowser = false;
     		        this.disableBrowserHover();
+    		        this.stopRecord();
     		    };
     		    DevToolCore.prototype.clearHMR = function () {
     		        this._hmr = {};
@@ -4849,6 +5013,7 @@
     		exports.getComponentFiberByDom = getComponentFiberByDom;
     		exports.getComponentFiberByFiber = getComponentFiberByFiber;
     		exports.getContextName = getContextName;
+    		exports.getDirectoryIdByFiber = getDirectoryIdByFiber;
     		exports.getDispatchFromFiber = getDispatchFromFiber;
     		exports.getElementName = getElementName;
     		exports.getElementNodesFromFiber = getElementNodesFromFiber;
@@ -4869,7 +5034,7 @@
     		exports.getRootTreeByFiber = getRootTreeByFiber;
     		exports.getSource = getSource;
     		exports.getState = getState;
-    		exports.getTree = getTree;
+    		exports.getTree = getTree$1;
     		exports.getTypeName = getTypeName;
     		exports.getValueFromId = getValueFromId;
     		exports.initPlainNode = initPlainNode;
@@ -5045,6 +5210,15 @@
             var d = data.data;
             core.setRetriggerStatus(d);
         }
+        if ((data === null || data === void 0 ? void 0 : data.type) === coreExports.MessagePanelType.enableRecord) {
+            var d = data.data;
+            if (d) {
+                core.startRecord();
+            }
+            else {
+                core.stopRecord();
+            }
+        }
         if ((data === null || data === void 0 ? void 0 : data.type) === coreExports.MessagePanelType.chunks) {
             core.notifyChunks(data.data);
         }
@@ -5146,8 +5320,7 @@
             detectorReady = true;
         }
         if (message.data.type === eventExports.MessagePanelType.show) {
-            hookPostMessageWithSource({ type: eventExports.MessageProxyType.init, to: sourceFrom.proxy, data: agentId });
-            hookPostMessageWithSource({ type: eventExports.MessageHookType.clear, to: sourceFrom.panel, data: { agentId: agentId } });
+            hookPostMessageWithSource({ type: eventExports.MessageHookType.clear, to: sourceFrom.panel, data: { agentId: agentId, force: true } });
         }
         onMessageFromPanelOrWorkerOrDetector(message.data);
     };

@@ -1,43 +1,8 @@
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { ChatOllama } from "@langchain/ollama";
+import { detector, translate } from "@/core/translate";
 
 import type { SettingType } from "@/hooks/useSyncConfig";
 
 const defaultUrl = "http://localhost:11434";
-
-const translatePrompt = ChatPromptTemplate.fromMessages([
-  [
-    "system",
-    `You are a professional translator. please translate the following in {source_lang} into {target_lang}, do not give any text other than the translated content, and trim the spaces at the end`,
-  ],
-  ["user", `Translate the following text: {text}`],
-]);
-
-const getLangPrompt = ChatPromptTemplate.fromMessages([
-  [
-    "system",
-    `You are a professional language detector. please detect the language of the following text, and return the language code, do not give any text other than the detected language code. if the text is chinese, please just return "chinese"`,
-  ],
-  ["user", `Detect the language of the following text: {text}`],
-]);
-
-const map = new Map<string, ChatOllama>();
-
-const getModel = (model: string, url: string) => {
-  const key = model + "-" + url;
-
-  const exist = map.get(key);
-
-  if (exist) {
-    return exist;
-  }
-
-  const chat = new ChatOllama({ model, baseUrl: url });
-
-  map.set(key, chat);
-
-  return chat;
-};
 
 // model name list
 let list: SettingType["list"] = [];
@@ -122,55 +87,41 @@ export default defineBackground(() => {
         if (model && url) {
           try {
             if (request.source_lang && request.target_lang) {
-              const prompt = await translatePrompt.invoke({
+              const { text } = await translate({
+                text: request.text,
+                model: model.label,
                 source_lang: request.source_lang,
                 target_lang: request.target_lang,
-                text: request.text,
               });
-
-              const chatModel = getModel(model.label, url);
-
-              const response = await chatModel.invoke(prompt);
 
               sendResponse({
                 data: {
                   source_lang: request.source_lang,
                   target_lang: request.target_lang,
                   source_text: request.text,
-                  target_text: response.content,
+                  target_text: text,
                 },
               });
             } else if (request.target_lang) {
-              const prompt = await getLangPrompt.invoke({
+              const { source_lang, target_lang } = await detector({
                 text: request.text,
+                model: model.label,
+                target_lang: request.target_lang,
               });
 
-              const chatModel = getModel(model.label, url);
-
-              const response = await chatModel.invoke(prompt);
-
-              const source_lang = response.content?.toString()?.trim();
-
-              let target_lang = request.target_lang;
-
-              if (source_lang?.startsWith("chinese")) {
-                target_lang = "english";
-              }
-
-              const translate = await translatePrompt.invoke({
+              const { text } = await translate({
+                text: request.text,
+                model: model.label,
                 source_lang,
                 target_lang,
-                text: request.text,
               });
-
-              const translateResponse = await chatModel.invoke(translate);
 
               sendResponse({
                 data: {
                   source_lang,
                   target_lang,
                   source_text: request.text,
-                  target_text: translateResponse.content,
+                  target_text: text,
                 },
               });
             }
