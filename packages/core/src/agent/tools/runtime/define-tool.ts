@@ -44,6 +44,15 @@ export function defineServerTool<
     args: InferSchemaType<TInput>,
     ctx: ToolExecuteCtx
   ) => Promise<InferSchemaType<TOutput>> | InferSchemaType<TOutput>;
+  /**
+   * Format the persisted tool output for the LLM wire.
+   *
+   * MUST be a pure function of the persisted output: the tool-compact cache is
+   * cleared on session restore (`restoreManagedSession`), after which history
+   * tool messages are re-derived. Any non-deterministic content (timestamps,
+   * random truncation, wall-clock state) would silently change the wire prefix
+   * and invalidate prompt cache for restored sessions.
+   */
   toModelOutput?: (
     ctx: ToModelOutputContext & { input: InferSchemaType<TInput>; output: InferSchemaType<TOutput> }
   ) => Promise<ModelToolContent> | ModelToolContent;
