@@ -20,7 +20,7 @@ import type { CompactionConfig } from "./types.js";
 export const KEEP_RECENT_WINDOW_RATIO = 0.25;
 
 /** Upper bound for the derived keep budget. */
-export const KEEP_RECENT_WINDOW_CAP = 32_000;
+export const KEEP_RECENT_WINDOW_CAP = 64_000;
 
 /** Lower bound so tiny-window models still retain a usable working set. */
 export const KEEP_RECENT_WINDOW_MIN = 4_000;

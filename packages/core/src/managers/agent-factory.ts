@@ -140,11 +140,12 @@ export async function buildManagedAgent({
     if (!compactionInput?.tokenThreshold && resolvedModelInfo?.contextWindow) {
       // NOTE: MAX_THRESHOLD caps the compaction trigger threshold, NOT the model's context window.
       // The model itself (e.g. DeepSeek V4 Flash) may support up to 1M tokens, but the UI
-      // displays tokenLimit (== compaction tokenThreshold) — so users see e.g. "35%/200k"
-      // instead of "7%/1M". This is by design: compaction triggers early to keep the agent
-      // responsive and avoid hitting the actual context limit. If you want the UI to show the
-      // real model context window, increase or remove this cap.
-      const MAX_THRESHOLD = 200_000;
+      // displays tokenLimit (== compaction tokenThreshold) — so users see e.g. "90%/400k"
+      // instead of "36%/1M". The 400k cap is a deliberate middle ground: large-window
+      // models (400k–1M) still compact well before deep-context attention degradation,
+      // while windows <= 400k use their full size (times compactAtPercent). Increase or
+      // remove this cap if you want the UI to show the real model context window.
+      const MAX_THRESHOLD = 400_000;
       compactionInput.tokenThreshold = Math.min(resolvedModelInfo.contextWindow, MAX_THRESHOLD);
     }
     managed.setCompactionConfig(createCompactionConfig(compactionInput));

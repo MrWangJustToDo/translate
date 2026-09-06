@@ -80,7 +80,7 @@ export type CompactionResult = z.infer<typeof compactionResultSchema>;
  */
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   tokenThreshold: 100000,
-  compactAtPercent: 80,
+  compactAtPercent: 90,
   keepRecentFlows: 2,
 };
 
