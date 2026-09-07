@@ -19,6 +19,7 @@ function getState(): LoadedModelsState | null {
 }
 
 function describeEntry(entry: LoadedModelsState["entries"][number]): string {
+  if (entry.type === "session") return "session-server";
   if (entry.type === "remote") return "remote-provider";
   return `direct:${entry.style}@${entry.baseURL.replace(/\/+$/, "")}`;
 }
@@ -91,19 +92,27 @@ registerCommand({
 
     // Build a state snapshot pointing at the target entry so provider
     // registration follows it (remote-provider entries need re-registration).
-    const targetState: LoadedModelsState = {
-      ...state,
-      active: { entryIndex, model },
-    };
-    await registerModelProviderForEntry(targetState);
+    // Session entries (remote-session host) skip registration entirely — the
+    // server-side session resolves the connection itself on `model.set`.
+    if (entry.type !== "session") {
+      const targetState: LoadedModelsState = {
+        ...state,
+        active: { entryIndex, model },
+      };
+      await registerModelProviderForEntry(targetState);
+    }
 
     const modelInfo = await resolveModelInfoFromModelsDev(model, entry.style);
     const result = await session.dispatch({
       type: "model.set",
       model,
-      modelStyle: entry.style,
-      modelBaseURL: entry.baseURL,
-      modelApiKey: entry.apiKey,
+      // Session entries carry no baseURL/apiKey — upstream credentials stay on
+      // the agent server, which resolves them from its own models.json/.env.
+      ...(entry.type !== "session" && {
+        modelStyle: entry.style,
+        modelBaseURL: entry.baseURL,
+        modelApiKey: entry.apiKey,
+      }),
       modelInfo: modelInfo ?? null,
     });
     if (!result.ok) {

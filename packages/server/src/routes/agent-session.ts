@@ -19,6 +19,8 @@ import { createMessagesDeltaWriter } from "../messages-delta.js";
 
 import { readServerModelEnv } from "./provider.js";
 
+import type { ModelsConfig, ModelsConfigEntry } from "@my-agent/core";
+
 interface SummarySnapshotLike {
   key: string;
   [field: string]: unknown;
@@ -136,6 +138,60 @@ async function loadCore() {
   return import("@my-agent/core");
 }
 
+/** Load the server's own models.json (`.agents/config/models.json`), if any. */
+async function loadServerModelsConfig(): Promise<ModelsConfig | null> {
+  const { loadModelsConfigFromFile } = await loadCore();
+  try {
+    return await loadModelsConfigFromFile();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the server-side connection for a remote `model.set` command.
+ *
+ * A `--remote-session` client dispatches `model.set` WITHOUT `modelBaseURL`/
+ * `modelApiKey` — upstream credentials never leave the server. The server picks
+ * the connection from its own models.json (the direct entry containing the
+ * model) or falls back to its `.env` provider; `modelInfo` comes from the same
+ * resolveModelConfig pipeline used at session creation. Commands that DO carry
+ * explicit connection fields pass through unchanged.
+ */
+async function resolveServerModelSetCommand(command: unknown): Promise<unknown> {
+  const cmd = command as { type?: string; model?: string; modelStyle?: string } | null;
+  if (cmd?.type !== "model.set" || !cmd.model?.trim()) return command;
+  const raw = command as Record<string, unknown>;
+  if (raw.modelBaseURL || raw.modelApiKey) return command;
+
+  const { resolveModelConfig } = await loadCore();
+  const config = await loadServerModelsConfig();
+  const model = cmd.model;
+  const entry = (config?.models ?? []).find(
+    (e): e is Extract<ModelsConfigEntry, { type: "direct" }> => e.type === "direct" && !!e.models?.includes(model)
+  );
+  const { connection, modelInfo } = entry
+    ? await resolveModelConfig({
+        model,
+        style: entry.style,
+        baseURL: entry.baseURL,
+        apiKey: entry.apiKey,
+      })
+    : await resolveModelConfig({
+        ...readServerModelEnv(),
+        model,
+        ...(cmd.modelStyle ? { style: cmd.modelStyle as "openai" | "anthropic" } : {}),
+      });
+  if (!connection.baseURL) return command;
+  return {
+    ...raw,
+    modelStyle: connection.style,
+    modelBaseURL: connection.baseURL,
+    ...(connection.apiKey ? { modelApiKey: connection.apiKey } : {}),
+    modelInfo: raw.modelInfo ?? modelInfo ?? null,
+  };
+}
+
 async function getSession(id: string): Promise<SessionLike | undefined> {
   const existing = sessions.get(id);
   if (existing) return existing;
@@ -162,6 +218,24 @@ export const agentSessionRoutes = new Hono()
       updatedAt: managed.updatedAt,
     }));
     return c.json({ agents: entries });
+  })
+  // Selectable model list for `--remote-session` clients (`/models` command).
+  // Mirrors the sanitized `/api/provider/info` contract: styles + model ids
+  // only — upstream baseURL/apiKey never leave the server, because `model.set`
+  // resolution happens server-side (resolveServerModelSetCommand).
+  .get("/models", async (c) => {
+    const config = await loadServerModelsConfig();
+    const envConnection = readServerModelEnv();
+    const entries = (config?.models ?? [])
+      .filter((e): e is Extract<ModelsConfigEntry, { type: "direct" }> => e.type === "direct")
+      .map((e) => ({ style: e.style, models: e.models ?? [] }));
+    // Fallback entry from the server `.env` so a models.json-less server still
+    // offers its own model.
+    if (entries.length === 0 && envConnection.model) {
+      entries.push({ style: envConnection.style, models: [envConnection.model] });
+    }
+    const active = config?.active ?? { entryIndex: 0, ...(envConnection.model ? { model: envConnection.model } : {}) };
+    return c.json({ entries, active });
   })
   .post("/", async (c) => {
     const body = createBodySchema.parse(await c.req.json());
@@ -239,7 +313,7 @@ export const agentSessionRoutes = new Hono()
     diag(`POST /:id/command id=${id} inSessions=${sessions.has(id)} inManager=${session ? "yes" : "no"}`);
     if (!session) return c.json({ error: true, message: "Session not found" }, 404);
     const command = await c.req.json();
-    const result = await session.dispatch(command);
+    const result = await session.dispatch(await resolveServerModelSetCommand(command));
     return c.json(result);
   })
   .get("/:id/events", async (c) => {

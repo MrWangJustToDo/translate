@@ -65,20 +65,25 @@ export const useConfig = createState(
         state.config.serverModel = "";
         applyOptionalAppConfig(state.config, config);
 
-        // Unified model-config pipeline: resolve the config source (local file
-        // for direct / remote-session hosts; the provider server for remote-provider
-        // hosts), load it into memory, and register the matching ModelProvider so
-        // agent creation resolves models through it. Non-fatal — a missing/invalid
-        // config just keeps the host-provided defaults.
-        if (!config.remoteSession) {
-          const source = config.remoteProvider
+        // Unified model-config pipeline: resolve the config source — the agent
+        // server for remote-session hosts (GET /api/agent/models, sanitized);
+        // the provider server for remote-provider hosts; the local
+        // `.agents/config/models.json` for direct hosts — load it into memory
+        // and register the matching ModelProvider so agent creation resolves
+        // models through it. Session sources resolve server-side: no client
+        // provider registration, and the config.* connection fields stay
+        // display-only (the agent runs server-side). Non-fatal — a missing/
+        // invalid config just keeps the host-provided defaults.
+        const source = config.remoteSession
+          ? { kind: "session" as const, serverUrl: config.remoteSession }
+          : config.remoteProvider
             ? { kind: "provider" as const, serverUrl: config.remoteProvider }
             : { kind: "file" as const };
-          try {
-            const loaded = await loadModels(source);
-            if (loaded) {
+        try {
+          const loaded = await loadModels(source);
+          if (loaded) {
+            if (!config.remoteSession) {
               await registerModelProviderForEntry(loaded);
-              state.modelsConfig = loaded;
               const entry = loaded.entries[loaded.active.entryIndex];
               if (entry) {
                 state.config.model = loaded.active.model ?? entry.models[0] ?? state.config.model;
@@ -88,9 +93,10 @@ export const useConfig = createState(
                 state.config.providerMode = entry.type === "remote" ? "remote" : "direct";
               }
             }
-          } catch {
-            // Ignore — fall back to host-provided model defaults.
+            state.modelsConfig = loaded;
           }
+        } catch {
+          // Ignore — fall back to host-provided model defaults.
         }
 
         state.initialized = true;
@@ -107,6 +113,11 @@ export const useConfig = createState(
        * Select a model (by `/models`) and persist it as the new active entry so a
        * restart resumes at it. Updates the in-memory modelsConfig.active and the
        * config defaults used by agent creation.
+       *
+       * Session entries (remote-session hosts) only update `modelsConfig.active`:
+       * the connection fields are server-owned, and writing `config.model` here
+       * would flip the agent-chat effect deps and tear down the live remote
+       * session.
        */
       selectModel: (entryIndex: number, model: string, entry: LoadedModelEntry) => {
         if (state.modelsConfig) {
@@ -115,6 +126,7 @@ export const useConfig = createState(
             active: { entryIndex, model },
           };
         }
+        if (entry.type === "session") return;
         state.config.model = model;
         state.config.style = entry.style;
         state.config.baseURL = entry.baseURL;

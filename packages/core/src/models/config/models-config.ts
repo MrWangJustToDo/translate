@@ -114,16 +114,24 @@ export interface ModelsConfig {
 
 /** Loaded, validated config — the in-memory source for model resolution. */
 export interface ModelsConfigSource {
-  kind: "file" | "provider";
+  kind: "file" | "provider" | "session";
   /** File mode: `.agents/config/models.json` under this root (default: CoreEnv rootPath). */
   rootPath?: string;
-  /** Provider mode: base URL exposing `GET /api/provider/info`. */
+  /** Provider mode: provider-proxy base URL exposing `GET /api/provider/info`.
+   *  Session mode: agent-server base URL exposing `GET /api/agent/models`. */
   serverUrl?: string;
 }
 
 /** A single resolved, selectable provider entry in memory. */
 export interface LoadedModelEntry {
-  type: "direct" | "remote";
+  /**
+   * - `direct`  — client-side connection (style + baseURL + apiKey in the host process).
+   * - `remote`  — routes through a remote-provider proxy (`/api/provider/*`).
+   * - `session` — resolved by the hosting Agent-Session server (remote-session
+   *   plane): the list is served by `GET /api/agent/models` and `model.set`
+   *   carries no baseURL/apiKey — the server resolves the connection itself.
+   */
+  type: "direct" | "remote" | "session";
   style: ModelStyle;
   baseURL: string;
   apiKey?: string;
@@ -222,6 +230,25 @@ export async function resolveModelsConfigFromProvider(serverUrl: string): Promis
 }
 
 // ============================================================================
+// Remote session models (agent-session plane)
+// ============================================================================
+
+/** `GET /api/agent/models` shape served by the Agent-Session plane (sanitized). */
+interface AgentModelsResponse {
+  entries: { style: ModelStyle; models: string[] }[];
+  active?: ModelsConfigActive;
+}
+
+async function fetchAgentModels(serverUrl: string): Promise<AgentModelsResponse> {
+  const baseUrl = serverUrl.replace(/\/+$/, "");
+  const res = await fetch(`${baseUrl}/api/agent/models`);
+  if (!res.ok) {
+    throw new Error(`Agent-session server unavailable at ${baseUrl}/api/agent/models (HTTP ${res.status}).`);
+  }
+  return (await res.json()) as AgentModelsResponse;
+}
+
+// ============================================================================
 // Unified resolve
 // ============================================================================
 
@@ -273,8 +300,32 @@ export async function loadModelEntries(config: ModelsConfig): Promise<LoadedMode
   return entries;
 }
 
-/** Resolve + validate + load into memory, picking the active entry/model. */
+/**
+ * Resolve + validate + load into memory, picking the active entry/model.
+ *
+ * One pipeline for all hosts — only the source differs:
+ * - `file`     — local `.agents/config/models.json`.
+ * - `provider` — remote-provider proxy (`GET /api/provider/info`); entries carry
+ *   the proxy baseURL + sentinel key because the CLIENT builds the adapter.
+ * - `session`  — remote agent-session server (`GET /api/agent/models`, sanitized).
+ *   Entries carry NO connection: the agent runs server-side and `model.set`
+ *   resolves credentials there. Callers must not register a ModelProvider for
+ *   session entries and must not write them into `config.model` mid-session.
+ */
 export async function loadModels(source: ModelsConfigSource): Promise<LoadedModelsState | null> {
+  if (source.kind === "session" && source.serverUrl) {
+    const data = await fetchAgentModels(source.serverUrl);
+    const entries: LoadedModelEntry[] = data.entries.map((e) => ({
+      type: "session" as const,
+      style: e.style,
+      baseURL: "",
+      models: e.models,
+    }));
+    if (entries.length === 0) return null;
+    const active: ModelsConfigActive =
+      data.active && data.active.entryIndex < entries.length ? data.active : { entryIndex: 0 };
+    return { config: { models: [], active }, entries, active };
+  }
   const config = await resolveModelsConfig(source);
   if (!config) return null;
   const entries = await loadModelEntries(config);
