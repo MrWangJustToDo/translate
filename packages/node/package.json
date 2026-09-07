@@ -2,7 +2,13 @@
   "name": "@my-agent/node",
   "version": "0.0.1",
   "description": "Node.js runtime environment for @my-agent/core",
-  "keywords": ["ai", "agent", "node", "coreenv", "sandbox"],
+  "keywords": [
+    "ai",
+    "agent",
+    "node",
+    "coreenv",
+    "sandbox"
+  ],
   "license": "MIT",
   "author": {
     "name": "MrWangJustToDo",
@@ -46,20 +52,20 @@
     "validate:code-mode-assembly": "node scripts/validate-code-mode-assembly.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.52",
+    "@anthropic-ai/sandbox-runtime": "^0.0.75",
     "@my-agent/core": "workspace:*",
-    "@tanstack/ai-code-mode": "0.4.3",
+    "@tanstack/ai-code-mode": "^0.4.8",
     "@tanstack/ai-isolate-node": "^0.1.51",
-    "@tanstack/ai-mcp": "^0.3.4",
+    "@tanstack/ai-mcp": "^0.3.9",
     "mime-types": "^3.0.2",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.4",
     "tree-sitter-wasms": "^0.1.13",
     "vscode-languageserver-protocol": "^3.18.2",
     "web-tree-sitter": "^0.25.10"
   },
   "devDependencies": {
     "@types/mime-types": "^3.0.1",
-    "@types/node": "^22.19.15",
+    "@types/node": "^26.4.1",
     "tsdown": "^0.21.10",
     "typescript": "^5.6.3"
   }

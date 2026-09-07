@@ -2,7 +2,13 @@
   "name": "@my-agent/server",
   "version": "0.0.1",
   "description": "CoreEnv-compatible HTTP server backed by @my-agent/node, with type-safe RPC client",
-  "keywords": ["ai", "agent", "server", "coreenv", "hono"],
+  "keywords": [
+    "ai",
+    "agent",
+    "server",
+    "coreenv",
+    "hono"
+  ],
   "license": "MIT",
   "author": {
     "name": "MrWangJustToDo",
@@ -61,16 +67,16 @@
     "validate:provider-proxy": "pnpm run build && node scripts/validate-provider-proxy.mjs"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.14",
-    "@hono/zod-validator": "^0.8.0",
+    "@hono/node-server": "^2.1.1",
+    "@hono/zod-validator": "^0.9.1",
     "@my-agent/core": "workspace:*",
     "@my-agent/node": "workspace:*",
-    "dotenv": "^16.5.0",
-    "hono": "^4.12.26",
-    "zod": "^4.4.3"
+    "dotenv": "^17.4.2",
+    "hono": "^4.13.7",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@types/node": "^22.19.15",
+    "@types/node": "^26.4.1",
     "tsdown": "^0.21.10",
     "typescript": "^5.6.3"
   }

@@ -2,7 +2,12 @@
   "name": "@my-agent/core",
   "version": "0.0.1",
   "description": "Core logic for My Agent",
-  "keywords": ["ai", "agent", "coding-agent", "tanstack-ai"],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "tanstack-ai"
+  ],
   "license": "MIT",
   "author": {
     "name": "MrWangJustToDo",
@@ -154,20 +159,20 @@
     "validate:code-mode-extension": "pnpm run build && node scripts/validate-code-mode-extension.mjs"
   },
   "dependencies": {
-    "@tanstack/ai": "^0.48.0",
-    "@tanstack/ai-anthropic": "^0.17.1",
-    "@tanstack/ai-client": "^0.26.0",
-    "@tanstack/ai-code-mode": "0.4.3",
-    "@tanstack/ai-mcp": "^0.3.4",
-    "@tanstack/ai-openai": "^0.21.1",
-    "@tanstack/openai-base": "^0.10.3",
+    "@tanstack/ai": "^0.53.0",
+    "@tanstack/ai-anthropic": "^0.18.5",
+    "@tanstack/ai-client": "^0.31.0",
+    "@tanstack/ai-code-mode": "^0.4.8",
+    "@tanstack/ai-mcp": "^0.3.9",
+    "@tanstack/ai-openai": "^0.22.5",
+    "@tanstack/openai-base": "^0.10.10",
     "htmlparser2": "^12.0.0",
     "openai": "^6.45.0",
     "pathe": "^2.0.3",
     "turndown": "^7.2.4",
-    "unpdf": "^1.8.0",
+    "unpdf": "^1.8.1",
     "yaml": "^2.9.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "optionalDependencies": {
     "web-tree-sitter": "^0.25.10"
