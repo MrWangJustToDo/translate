@@ -7,17 +7,7 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 /** Log categories for filtering */
 export type LogCategory =
-  | "agent"
-  | "chat"
-  | "llm"
-  | "tool"
-  | "approval"
-  | "compaction"
-  | "todo"
-  | "skill"
-  | "memory"
-  | "hooks"
-  | "system";
+  "agent" | "chat" | "llm" | "tool" | "approval" | "compaction" | "todo" | "skill" | "memory" | "hooks" | "system";
 
 /** Log entry */
 export interface LogEntry {

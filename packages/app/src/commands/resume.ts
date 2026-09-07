@@ -75,8 +75,7 @@ registerCommand({
     if (!result.ok) return { ok: false, error: result.error };
 
     const data = result.data as
-      | { sessionId?: string; name?: string; model?: string; uiMessages?: unknown[] }
-      | undefined;
+      { sessionId?: string; name?: string; model?: string; uiMessages?: unknown[] } | undefined;
 
     if (ctx.setMessages && Array.isArray(data?.uiMessages)) {
       ctx.setMessages(data.uiMessages as Parameters<NonNullable<typeof ctx.setMessages>>[0]);

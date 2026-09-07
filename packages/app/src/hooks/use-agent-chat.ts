@@ -417,8 +417,7 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
         if (part.name !== "ask_user") continue;
         if (part.state !== "input-complete" || part.output !== undefined) continue;
         const input = parseToolInput(part) as
-          | { question?: string; options?: string[]; multiSelect?: boolean }
-          | undefined;
+          { question?: string; options?: string[]; multiSelect?: boolean } | undefined;
         all.push({
           toolCallId: part.id,
           question: input?.question ?? "",

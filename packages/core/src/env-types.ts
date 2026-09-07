@@ -54,12 +54,7 @@ export class FileError extends Error {
  * Stable, backend-independent execution error codes.
  */
 export type ExecutionErrorCode =
-  | "aborted"
-  | "timeout"
-  | "shell_unavailable"
-  | "spawn_error"
-  | "callback_error"
-  | "unknown";
+  "aborted" | "timeout" | "shell_unavailable" | "spawn_error" | "callback_error" | "unknown";
 
 /**
  * Typed error for command execution failures.

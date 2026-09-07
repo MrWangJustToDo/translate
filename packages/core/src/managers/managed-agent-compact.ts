@@ -127,8 +127,7 @@ export interface ManualCompactHost {
 }
 
 export type ManualCompactResult =
-  | { ok: true; message: string; tokensBefore?: number; tokensAfter?: number }
-  | { ok: false; error: string };
+  { ok: true; message: string; tokensBefore?: number; tokensAfter?: number } | { ok: false; error: string };
 
 /**
  * Run the same autoCompact path as the app `/compact` command.

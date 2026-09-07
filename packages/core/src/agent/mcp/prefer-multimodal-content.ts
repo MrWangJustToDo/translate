@@ -28,8 +28,7 @@ export type McpCallToolResult = {
 };
 
 export type TanStackContentPart =
-  | { type: "text"; content: string }
-  | { type: "image"; source: { type: "data"; value: string; mimeType: string } };
+  { type: "text"; content: string } | { type: "image"; source: { type: "data"; value: string; mimeType: string } };
 
 const MULTIMODAL_CONTENT_TYPES = new Set(["image", "audio", "video", "resource"]);
 

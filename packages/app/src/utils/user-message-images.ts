@@ -1,8 +1,7 @@
 import { IMAGE_REF_RE } from "../hooks/user-input-helpers.js";
 
 export type UserMessageSegment =
-  | { type: "text"; content: string }
-  | { type: "image"; displayIndex: number; filename: string };
+  { type: "text"; content: string } | { type: "image"; displayIndex: number; filename: string };
 
 /**
  * Split submitted user text into plain text and `[Image #N: filename]` segments for inline UI.
