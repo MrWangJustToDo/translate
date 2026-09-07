@@ -31,6 +31,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Generate WXT types (extension .wxt)
+        # --ignore-scripts skips the extension postinstall ("wxt prepare"), so
+        # ./.wxt/tsconfig.json is never generated. Required for the extension
+        # typecheck (tsconfig extends ./.wxt/tsconfig.json) and for the
+        # playground build (vite 8 oxc tsconfig auto-discovery loads the root
+        # tsconfig's references, including packages/extension).
+        run: pnpm --filter @my-agent/extension exec wxt prepare
+
       - name: Typecheck
         run: pnpm typecheck
 

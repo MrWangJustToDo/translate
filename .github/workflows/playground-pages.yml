@@ -42,6 +42,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Generate WXT types (extension .wxt)
+        # --ignore-scripts skips the extension postinstall ("wxt prepare"), so
+        # ./.wxt/tsconfig.json is never generated. Without it, the playground's
+        # vite 8 / rolldown oxc tsconfig auto-discovery fails: it loads the root
+        # tsconfig's references (packages/extension extends ./.wxt/tsconfig.json)
+        # and aborts with "Tsconfig not found".
+        run: pnpm --filter @my-agent/extension exec wxt prepare
+
       - name: Build playground
         env:
           # Prefer repo Variables; also accept Secrets (same name) if Variables is empty.
