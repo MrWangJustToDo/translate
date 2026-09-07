@@ -1,0 +1,44 @@
+{
+  "name": "@my-agent/im-bridge",
+  "version": "0.0.1",
+  "description": "Generic IM bridge for My Agent — connects chat platforms (Telegram, …) to an AgentSession server",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.mts",
+      "import": "./dist/cli.mjs"
+    }
+  },
+  "bin": {
+    "my-agent-im-bridge": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "start": "node dist/cli.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@my-agent/core": "workspace:*",
+    "@my-agent/server": "workspace:*",
+    "@tanstack/ai": "^0.53.0",
+    "dotenv": "^17.4.2",
+    "grammy": "^1.36.3",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "tsdown": "^0.21.10",
+    "typescript": "^5.6.3"
+  }
+}

@@ -168,6 +168,7 @@ Client planes combine per the boundary rules below; every row is a working confi
 | `@my-agent/extension` | Chrome extension host (WXT); requires a running server |
 | `@my-agent/playground` | In-browser WebContainer host (Vite); see [packages/playground/README.md](packages/playground/README.md) |
 | `@my-agent/mcp-server` | Standalone MCP server for external tool integration |
+| `@my-agent/im-bridge` | Generic IM bridge — connects chat platforms (Telegram, …) to an AgentSession server; per-chat sessions, streaming replies, ask_user/approval buttons, allowlist |
 
 > **Deep dive:** See [AGENTS.md](AGENTS.md) for full architecture, code conventions, and detailed guidelines. See [packages/core/ARCHITECTURE.md](packages/core/ARCHITECTURE.md) for the core runtime startup, initialization, session, memory, compaction, and approval flows.
 
@@ -364,7 +365,44 @@ pnpm dev:playground
 
 # MCP server
 pnpm start:mcp-server
+
+# IM bridge (Telegram) — requires a running agent server (pnpm start:server)
+pnpm start:im-bridge
 ```
+
+### IM Bridge (Telegram)
+
+`@my-agent/im-bridge` is a generic chat bridge — each platform is a `ChatAdapter`
+(Telegram ships first; Slack/Discord/飞书 adapters can reuse the same contract).
+It is a pure AgentSession client (same session path as `--remote-session`): it
+registers no CoreEnv/ModelProvider — the **agent server resolves the model from
+its own `.env`** (`MODEL` / `API_KEY` / `BASE_URL`).
+
+Setup:
+
+```bash
+# 1. Start the agent server (its .env must configure MODEL + API_KEY)
+pnpm start:server
+
+# 2. Create a bot with @BotFather and configure the bridge (.env)
+TELEGRAM_BOT_TOKEN=123456:ABC…      # from @BotFather /newbot
+REMOTE_SESSION=http://localhost:3100 # agent server
+IM_BRIDGE_ALLOW_USERS=123456789      # comma-separated user ids (empty = allow all)
+# IM_BRIDGE_ALLOW_CHATS=…            # optional chat allowlist
+# IM_BRIDGE_MODEL=…                  # optional model override (default: server .env)
+# IM_BRIDGE_DATA_DIR=.agents/im-bridge
+# IM_BRIDGE_EDIT_INTERVAL_MS=3000    # streaming edit throttle
+# IM_BRIDGE_APPROVAL_TTL_MS=60000    # approval/ask_user auto-deny TTL
+
+# 3. Start the bridge (long-polling, no public endpoint needed)
+pnpm start:im-bridge
+```
+
+Behavior: one agent session per chat (persisted under `IM_BRIDGE_DATA_DIR`,
+restored via `host.connect` on restart); replies stream via in-place message
+edits; pending tool approvals and `ask_user` questions render as inline buttons;
+`/new` resets the chat's session, `/stop` stops the agent. Message the bot
+privately — group chats are mention-only.
 
 ---
 

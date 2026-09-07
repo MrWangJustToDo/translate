@@ -37,6 +37,7 @@ A pnpm monorepo with eight packages organized in a layered architecture.
 | `@my-agent/extension` | Chrome extension host using WXT framework |
 | `@my-agent/playground` | In-browser WebContainer host (Vite) |
 | `@my-agent/mcp-server` | MCP server for external tool integration |
+| `@my-agent/im-bridge` | Generic IM bridge (Telegram adapter) — a headless AgentSession client like the remote CLI; no CoreEnv/ModelProvider of its own |
 
 ## Architecture
 
