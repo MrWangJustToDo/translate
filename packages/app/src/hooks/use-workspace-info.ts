@@ -40,7 +40,7 @@ export const getWorkSpaceInfo = async () => {
   let git: WorkspaceGitInfo | undefined;
 
   try {
-    const remoteSession = useConfig.getState().config.remoteSession?.trim();
+    const remoteSession = useConfig.getReadonlyState().config.remoteSession?.trim();
     if (remoteSession) {
       // Remote session: the effective workspace is the one the agent actually
       // runs on (the server process CoreEnv — which may itself be a remote env).
