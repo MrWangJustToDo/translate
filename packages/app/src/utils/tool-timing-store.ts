@@ -1,5 +1,5 @@
 /**
- * use-tool-timing-store — Global (non-component-level) tool timing store.
+ * tool-timing-store — Global (non-component-level) tool timing store.
  *
  * ## Data flow
  *

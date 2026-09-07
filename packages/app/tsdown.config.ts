@@ -20,9 +20,9 @@ export default defineConfig([
       "src/utils/attachment-hash.ts",
       "src/utils/apply-app-config.ts",
       "src/utils/get-messages.ts",
-      "src/hooks/user-input-helpers.ts",
+      "src/utils/user-input-helpers.ts",
 
-      "src/hooks/streaming-ingest.ts",
+      "src/utils/streaming-ingest.ts",
     ],
     format: ["esm"],
     dts: true,

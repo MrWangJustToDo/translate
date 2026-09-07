@@ -8,6 +8,7 @@ import { useAdapter } from "../context/adapter-context.js";
 import { clearFlatMessageCache } from "../utils/message-flat-cache.js";
 import { getActiveHost, resolveAgentSession } from "../utils/session-resolve.js";
 import { isToolCallPart, isPendingToolApproval, parseToolInput } from "../utils/tool-part.js";
+import { handleToolLifecycleEvent } from "../utils/tool-timing-store.js";
 
 import { bindSessionLog } from "./use-agent-log.js";
 import { useAgentStatus } from "./use-agent-status.js";
@@ -17,7 +18,6 @@ import { useConfig } from "./use-config.js";
 import { useForceUpdate } from "./use-force-update.js";
 import { useThinkingLine } from "./use-thinking-line.js";
 import { useTodoManager } from "./use-todo-manager.js";
-import { handleToolLifecycleEvent } from "./use-tool-timing-store.js";
 import { getWorkSpaceInfo } from "./use-workspace-info.js";
 
 import type { AppConfig } from "../adapter/types.js";

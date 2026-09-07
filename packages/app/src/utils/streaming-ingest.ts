@@ -3,7 +3,7 @@
  * Throttle is configured per toolCallId by {@link useStreamingOutput} consumers.
  */
 
-import { useStreamingStore } from "./use-streaming-store.js";
+import { useStreamingStore } from "../hooks/use-streaming-store.js";
 
 // ============================================================================
 // Types

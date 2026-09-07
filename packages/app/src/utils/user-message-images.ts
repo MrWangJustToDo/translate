@@ -1,4 +1,4 @@
-import { IMAGE_REF_RE } from "../hooks/user-input-helpers.js";
+import { IMAGE_REF_RE } from "./user-input-helpers.js";
 
 export type UserMessageSegment =
   { type: "text"; content: string } | { type: "image"; displayIndex: number; filename: string };

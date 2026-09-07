@@ -1,7 +1,6 @@
 import { createState } from "reactivity-store";
 
 import { createFeedbackQueue, INPUT_FEEDBACK_DISPLAY_MS } from "../utils/input-feedback-queue.js";
-
 import {
   appendHistoryEntry,
   createImagePlaceholder,
@@ -16,10 +15,10 @@ import {
   PASTE_MERGE_WINDOW_MS,
   removeAttachmentAtIndex,
   removePasteAtIndex,
-} from "./user-input-helpers.js";
+} from "../utils/user-input-helpers.js";
 
-import type { PendingPaste } from "./user-input-helpers.js";
 import type { Attachment } from "../types/attachment.js";
+import type { PendingPaste } from "../utils/user-input-helpers.js";
 import type { Key } from "ink";
 
 export {
@@ -35,9 +34,9 @@ export {
   isImagePlaceholder,
   isLargePaste,
   isPastePlaceholder,
-} from "./user-input-helpers.js";
+} from "../utils/user-input-helpers.js";
 
-export type { PendingPaste } from "./user-input-helpers.js";
+export type { PendingPaste } from "../utils/user-input-helpers.js";
 
 // ============================================================================
 // Types

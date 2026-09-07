@@ -8,8 +8,8 @@
 import { useEffect } from "react";
 
 import { resolveAgentSession } from "../utils/session-resolve.js";
+import { clearStreamingIngest, ingestStreamingChunk, registerStreamingThrottle } from "../utils/streaming-ingest.js";
 
-import { clearStreamingIngest, ingestStreamingChunk, registerStreamingThrottle } from "./streaming-ingest.js";
 import { useAgent } from "./use-agent.js";
 import { useStreamingStore } from "./use-streaming-store.js";
 

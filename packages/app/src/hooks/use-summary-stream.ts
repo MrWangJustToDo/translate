@@ -15,8 +15,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { resolveAgentSession } from "../utils/session-resolve.js";
+import { cancelSummaryBuffer, flushSummaryBuffer, scheduleSummaryFlush } from "../utils/summary-stream-throttle.js";
 
-import { cancelSummaryBuffer, flushSummaryBuffer, scheduleSummaryFlush } from "./summary-stream-throttle.js";
 import { useAgent } from "./use-agent.js";
 
 export interface UseSummaryStreamOptions {

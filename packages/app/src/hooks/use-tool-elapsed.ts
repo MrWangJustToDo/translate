@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 
-import { useToolTimingStore } from "./use-tool-timing-store.js";
+import { useToolTimingStore } from "../utils/tool-timing-store.js";
 
 // ============================================================================
 // Constants
