@@ -99,6 +99,13 @@ export function createRemoteAgentSessionHost(options: RemoteAgentSessionHostOpti
       // Synchronous contract like the Local host — hydrate lazily; snapshot
       // failures surface on first use (getSnapshot returns a shell until then).
       const session = client(agentId);
+      if (session.isTerminated()) {
+        // Server reported this id as gone (404): evict so the caller (e.g. the
+        // bridge resolver) falls through to create a fresh session instead of
+        // reconnecting to a dead id forever.
+        clients.delete(agentId);
+        return null;
+      }
       // `connect()` runs on every session lookup (resolveAgentSession), so an
       // unconditional refresh re-downloads the full transcript each time.
       // Subscribed clients stay live via SSE anyway; only refetch when the

@@ -319,6 +319,14 @@ export class RemoteSessionClient implements AgentSession {
   private resyncInFlight: Promise<void> | null = null;
   private readonly summaryCache = new Map<string, SummaryStreamSnapshot>();
   private readonly toolBufferCache: ToolBufferMap = new Map();
+  /**
+   * Set once the server reports this agent id no longer exists (HTTP 404
+   * "Session not found"). Terminated clients stop reconnecting and fail fast:
+   * `dispatch` returns `not_found`, and the host evicts them so a stale
+   * journal mapping heals into a fresh session instead of reconnecting forever.
+   */
+  private terminated = false;
+  private terminatedReason = "";
 
   constructor(options: RemoteSessionClientOptions) {
     this.id = options.agentId;
@@ -329,14 +337,27 @@ export class RemoteSessionClient implements AgentSession {
     if (options.initialSnapshot) this.lastSyncAt = Date.now();
   }
 
+  /** Whether the server reported this session as gone (404). */
+  isTerminated(): boolean {
+    return this.terminated;
+  }
+
+  private markTerminated(reason: string): void {
+    if (this.terminated) return;
+    this.terminated = true;
+    this.terminatedReason = reason;
+    console.error(`[RemoteSessionClient] session ${this.id} terminated: ${reason}`);
+  }
+
   /** Refetch full snapshot + remount seeds. Used for lazy connect and manual resync. */
   async refresh(): Promise<void> {
+    if (this.terminated) return;
     await this.resync();
   }
 
   /** True when the cached snapshot is missing or older than `freshnessMs`. */
   isSnapshotStale(freshnessMs = RESYNC_FRESH_MS): boolean {
-    return Date.now() - this.lastSyncAt > freshnessMs;
+    return !this.terminated && Date.now() - this.lastSyncAt > freshnessMs;
   }
 
   getSnapshot(): AgentSessionSnapshot {
@@ -353,11 +374,18 @@ export class RemoteSessionClient implements AgentSession {
   }
 
   async dispatch(command: AgentSessionCommand): Promise<AgentSessionCommandResult> {
+    if (this.terminated) {
+      return { ok: false, code: "not_found", error: this.terminatedReason || "Session not found on server" };
+    }
     const response = await this.fetchImpl(joinUrl(this.baseUrl, `/api/agent/${this.id}/command`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(command),
     });
+    if (response.status === 404) {
+      this.markTerminated("Session not found on server");
+      return { ok: false, code: "not_found", error: "Session not found on server" };
+    }
     // State changes propagate via the subscribed channels (state/messages/
     // usage/todos/plan/...) — no full-snapshot refetch per command.
     return await readJson<AgentSessionCommandResult>(response);
@@ -380,6 +408,10 @@ export class RemoteSessionClient implements AgentSession {
 
   private async doResync(): Promise<void> {
     const snapRes = await this.fetchImpl(joinUrl(this.baseUrl, `/api/agent/${this.id}/snapshot`));
+    if (snapRes.status === 404) {
+      this.markTerminated("Session not found on server");
+      throw new Error("Session not found on server (404)");
+    }
     this.snapshot = await readJson<AgentSessionSnapshot>(snapRes);
     reviveMessageTimestamps(this.snapshot.messages);
     this.lastSyncAt = Date.now();
@@ -486,6 +518,13 @@ export class RemoteSessionClient implements AgentSession {
           }
         } catch (error) {
           if (stopped || stopController.signal.aborted) return;
+          if (this.terminated) {
+            // Session no longer exists server-side — stop reconnecting. The host
+            // evicts terminated clients, so a stale journal mapping heals into a
+            // fresh session on the next command instead of spamming retries.
+            console.error(`[RemoteSessionClient] SSE stopped — ${this.terminatedReason}`);
+            return;
+          }
           console.error("[RemoteSessionClient] SSE error — reconnecting", error);
         }
 
