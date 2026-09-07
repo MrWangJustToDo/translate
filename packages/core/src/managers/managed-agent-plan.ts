@@ -10,7 +10,6 @@ import type { AgentChatController } from "./controllers/agent-chat-controller.js
 import type {
   BeginPlanExecutionResult,
   PlanModeController,
-  PlanModePhase,
   PlanModeState,
 } from "../agent/plan/plan-mode-controller.js";
 
@@ -26,10 +25,6 @@ export function enablePlanMode(host: PlanApiHost): void {
 
 export function disablePlanMode(host: PlanApiHost): void {
   host.planMode.disable();
-}
-
-export function togglePlanMode(host: PlanApiHost): PlanModePhase {
-  return host.planMode.toggle();
 }
 
 export function getPlanModeState(host: PlanApiHost): PlanModeState {

@@ -136,11 +136,8 @@ export type AgentSessionCommand =
   | { type: "rename"; name: string }
   /** Side-LLM title generation on the Host process (not in the UI). */
   | { type: "rename.generate" }
-  | { type: "auto.set"; enabled: boolean }
-  | { type: "auto.toggle" }
-  | { type: "plan.enable" }
-  | { type: "plan.disable" }
-  | { type: "plan.toggle" }
+  | { type: "mode.set"; mode: AgentMode }
+  | { type: "mode.toggle" }
   | { type: "plan.execute"; sendSteer?: boolean }
   | { type: "plan.cancel" }
   | { type: "plan.save"; nameHint?: string }

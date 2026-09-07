@@ -107,48 +107,60 @@ registerCommand({
       }
     };
 
-    const enableAuto = async (): Promise<CommandResult> => {
-      await session.dispatch({ type: "auto.set", enabled: true });
-      await approveAllPending();
-      return { ok: true, message: "Auto mode on — tools run without approval" };
-    };
-    const disableAuto = async (): Promise<CommandResult> => {
-      await session.dispatch({ type: "auto.set", enabled: false });
-      return { ok: true, message: "Auto mode off — tools require approval when configured" };
-    };
-    const enablePlan = async (): Promise<CommandResult> => {
-      await session.dispatch({ type: "plan.enable" });
+    /** Single dispatch: core handles mutual exclusivity; message reflects the resulting mode. */
+    const applyMode = async (target: AgentMode): Promise<CommandResult> => {
+      const result = await session.dispatch({ type: "mode.set", mode: target });
+      if (!result.ok) return { ok: false, error: result.error };
+      const applied = (result.data as { mode?: AgentMode } | undefined)?.mode ?? target;
+      if (applied === "auto") {
+        await approveAllPending();
+        return { ok: true, message: "Auto mode on — tools run without approval" };
+      }
+      if (applied === "plan") {
+        return {
+          ok: true,
+          message: "Plan mode on — explore read-only (prefer task), then create_plan when ready",
+        };
+      }
       return {
         ok: true,
-        message: "Plan mode on — explore read-only (prefer task), then create_plan when ready",
+        message:
+          mode === "plan"
+            ? "Plan mode off (plan todos cleared if any)"
+            : mode === "auto"
+              ? "Auto mode off — tools require approval when configured"
+              : "Already in normal mode",
       };
-    };
-    const exitPlan = async (): Promise<CommandResult> => {
-      await session.dispatch({ type: "plan.disable" });
-      return { ok: true, message: "Plan mode off (plan todos cleared if any)" };
     };
 
     if (head === "" || head === "toggle") {
       // Same cycle as Shift+Tab: normal → auto → plan → off
-      if (mode === "normal") return enableAuto();
-      if (mode === "auto") return enablePlan();
-      return exitPlan();
+      const result = await session.dispatch({ type: "mode.toggle" });
+      if (!result.ok) return { ok: false, error: result.error };
+      const applied = (result.data as { mode?: AgentMode } | undefined)?.mode ?? "normal";
+      if (applied === "auto") {
+        await approveAllPending();
+        return { ok: true, message: "Auto mode on — tools run without approval" };
+      }
+      if (applied === "plan") {
+        return {
+          ok: true,
+          message: "Plan mode on — explore read-only (prefer task), then create_plan when ready",
+        };
+      }
+      return { ok: true, message: "Mode off — tools require approval when configured" };
     }
 
-    if (head === "plan") return second === "off" ? exitPlan() : enablePlan();
-    if (head === "auto") return second === "off" ? disableAuto() : enableAuto();
+    if (head === "plan") return applyMode(second === "off" ? "normal" : "plan");
+    if (head === "auto") return applyMode(second === "off" ? "normal" : "auto");
 
     if (head === "switch") {
-      if (second === "plan") return enablePlan();
-      if (second === "auto") return enableAuto();
+      if (second === "plan") return applyMode("plan");
+      if (second === "auto") return applyMode("auto");
       return { ok: false, error: "Usage: /mode switch plan | /mode switch auto" };
     }
 
-    if (head === "off") {
-      if (mode === "plan") return exitPlan();
-      if (mode === "auto") return disableAuto();
-      return { ok: true, message: "Already in normal mode" };
-    }
+    if (head === "off") return applyMode("normal");
 
     if (head === "status") {
       if (mode === "plan") {

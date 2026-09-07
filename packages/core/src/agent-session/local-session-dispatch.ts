@@ -102,25 +102,13 @@ export async function dispatchLocalAgentSessionCommand(
           ? { ok: true, data: { name: result.name } }
           : { ok: false, code: "failed", error: result.error };
       }
-      case "auto.set": {
-        managed.setAutoModeEnabled(command.enabled);
-        return { ok: true };
+      case "mode.set": {
+        const mode = managed.setAgentMode(command.mode);
+        return { ok: true, data: { mode } };
       }
-      case "auto.toggle": {
-        const enabled = managed.toggleAutoMode();
-        return { ok: true, data: { enabled } };
-      }
-      case "plan.enable": {
-        managed.enablePlanMode();
-        return { ok: true };
-      }
-      case "plan.disable": {
-        managed.disablePlanMode();
-        return { ok: true };
-      }
-      case "plan.toggle": {
-        const phase = managed.togglePlanMode();
-        return { ok: true, data: { phase } };
+      case "mode.toggle": {
+        const mode = managed.cycleAgentMode();
+        return { ok: true, data: { mode } };
       }
       case "plan.execute": {
         const result = managed.beginPlanExecution({ sendSteer: command.sendSteer });

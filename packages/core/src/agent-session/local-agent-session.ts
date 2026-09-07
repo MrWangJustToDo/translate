@@ -378,11 +378,8 @@ class LocalAgentSessionImpl implements AgentSession {
           ts,
         };
         break;
-      case "auto.set":
-      case "auto.toggle":
-      case "plan.enable":
-      case "plan.disable":
-      case "plan.toggle":
+      case "mode.set":
+      case "mode.toggle":
         event = {
           channel: "mode",
           payload: { mode: this.managed.getAgentMode(), autoMode: this.managed.isAutoModeEnabled() },

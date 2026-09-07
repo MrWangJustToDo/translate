@@ -52,7 +52,6 @@ import {
   listWorkspacePlans as listWorkspacePlansHelper,
   loadPlanFromWorkspace as loadPlanFromWorkspaceHelper,
   savePlanToWorkspace as savePlanToWorkspaceHelper,
-  togglePlanMode as togglePlanModeHelper,
 } from "./managed-agent-plan.js";
 import { buildTurnContextSections, buildFrozenSystemPrompt } from "./managed-agent-prompt.js";
 import {
@@ -92,7 +91,7 @@ import type { MemoryExtensionConfig } from "../agent/memory";
 import type { MemoryManager } from "../agent/memory/memory-manager.js";
 import type { SessionStore } from "../agent/persistence/session-store.js";
 import type { SessionData } from "../agent/persistence/types.js";
-import type { BeginPlanExecutionResult, PlanModePhase, PlanModeState } from "../agent/plan/plan-mode-controller.js";
+import type { BeginPlanExecutionResult, PlanModeState } from "../agent/plan/plan-mode-controller.js";
 import type { AgentRunner } from "../agent/runner/agent-runner.js";
 import type { SkillRegistry, SkillsExtensionConfig } from "../agent/skills";
 import type { TodoManager } from "../agent/todo";
@@ -1088,16 +1087,6 @@ export class ManagedAgent {
     }
   }
 
-  /** @returns new enabled state */
-  toggleAutoMode(): boolean {
-    const enabled = this.autoMode.toggle();
-    // Auto mode and plan mode are mutually exclusive — enabling auto disables plan
-    if (enabled && this.planMode.getPhase() !== "off") {
-      this.planMode.disable();
-    }
-    return enabled;
-  }
-
   /**
    * Whether pending tool approvals should be auto-approved this turn.
    * True when auto mode is on, or plan mode is building a seeded plan.
@@ -1116,6 +1105,29 @@ export class ManagedAgent {
     return "normal";
   }
 
+  /**
+   * Set the agent to an explicit mode. Modes are mutually exclusive:
+   * setting auto exits plan; setting plan exits auto; normal clears both.
+   * @returns the resulting mode
+   */
+  setAgentMode(mode: AgentMode): AgentMode {
+    if (mode === "plan") {
+      this.enablePlanMode();
+    } else if (mode === "auto") {
+      this.setAutoModeEnabled(true);
+    } else {
+      if (this.planMode.getPhase() !== "off") this.disablePlanMode();
+      this.autoMode.setEnabled(false);
+    }
+    return this.getAgentMode();
+  }
+
+  /** Cycle normal → auto → plan → normal. @returns the resulting mode */
+  cycleAgentMode(): AgentMode {
+    const current = this.getAgentMode();
+    return this.setAgentMode(current === "normal" ? "auto" : current === "auto" ? "plan" : "normal");
+  }
+
   // ============================================================================
   // Plan mode
   // ============================================================================
@@ -1130,15 +1142,6 @@ export class ManagedAgent {
 
   disablePlanMode(): void {
     disablePlanModeHelper(this);
-  }
-
-  togglePlanMode(): PlanModePhase {
-    const phase = togglePlanModeHelper(this);
-    // Plan mode and auto mode are mutually exclusive — entering plan disables auto
-    if (phase !== "off" && this.autoMode.isEnabled()) {
-      this.autoMode.setEnabled(false);
-    }
-    return phase;
   }
 
   getPlanModeState(): PlanModeState {
