@@ -26,6 +26,9 @@ export interface RemoteAgentSessionHostOptions {
   baseUrl: string;
 }
 
+/** connect() reuses a snapshot hydrated within this window instead of refetching. */
+const CONNECT_REFRESH_FRESH_MS = 10_000;
+
 /**
  * Create a remote {@link AgentSessionHost} bound to an agent server.
  *
@@ -96,7 +99,13 @@ export function createRemoteAgentSessionHost(options: RemoteAgentSessionHostOpti
       // Synchronous contract like the Local host — hydrate lazily; snapshot
       // failures surface on first use (getSnapshot returns a shell until then).
       const session = client(agentId);
-      void session.refresh().catch(() => {});
+      // `connect()` runs on every session lookup (resolveAgentSession), so an
+      // unconditional refresh re-downloads the full transcript each time.
+      // Subscribed clients stay live via SSE anyway; only refetch when the
+      // cached snapshot is genuinely stale.
+      if (session.isSnapshotStale(CONNECT_REFRESH_FRESH_MS)) {
+        void session.refresh().catch(() => {});
+      }
       return session;
     },
 

@@ -17,17 +17,19 @@
  * O(session size).
  *
  * Safety nets force a full payload whenever identity diffing could miss a
- * mutation: no baseline, >50% of the array changed, or a periodic interval.
- * Patches are coalesced on a trailing-edge window (~60 ms) matching the
- * client's render throttle; full payloads flush immediately.
+ * mutation: no baseline, a reordering of pre-existing messages (not expressible
+ * as id-keyed upserts — see `orderChanged` below), >50% of the array changed,
+ * or a periodic interval. Patches are coalesced on a trailing-edge window
+ * (~60 ms) matching the client's render throttle; full payloads flush
+ * immediately.
  */
 
 /** Trailing-edge coalescing window for patch frames (ms). */
 export const PATCH_COALESCE_MS = 60;
 /** Safety net: force a full payload after this many events since the last full. */
-export const PATCH_SAFETY_NET_EVENTS = 1000;
+export const PATCH_SAFETY_NET_EVENTS = 2000;
 /** Safety net: force a full payload after this long since the last full (ms). */
-export const PATCH_SAFETY_NET_MS = 10_000;
+export const PATCH_SAFETY_NET_MS = 60_000;
 
 export interface MessagesPatchUpsert {
   index: number;
@@ -121,8 +123,26 @@ export function createMessagesDeltaWriter(write: (payload: MessagesDeltaPayload)
       const nextIdSet = new Set(nextIds);
       const removed = baselineIds.filter((id) => !nextIdSet.has(id));
 
+      // Moves/swaps of pre-existing messages cannot be expressed as id-keyed
+      // upserts: the client merges by id (replace-in-place or splice-insert),
+      // so a shifted shared-id sequence would silently desync. Pure
+      // insert/remove keeps the relative order of shared ids intact and stays
+      // on the cheap patch path. Two-pointer walk, no allocation, early exit.
+      let orderChanged = false;
+      let cursor = 0;
+      for (let index = 0; index < nextIds.length && !orderChanged; index += 1) {
+        const id = nextIds[index];
+        if (!baselineRefs.has(id)) continue;
+        while (cursor < baselineIds.length && !nextIdSet.has(baselineIds[cursor])) cursor += 1;
+        if (cursor >= baselineIds.length || baselineIds[cursor] !== id) {
+          orderChanged = true;
+          break;
+        }
+        cursor += 1;
+      }
+
       const changed = upserted.length + removed.length;
-      if (baselineRefs.size === 0 || safetyDue || changed * 2 > messages.length) {
+      if (baselineRefs.size === 0 || safetyDue || orderChanged || changed * 2 > messages.length) {
         sendFull(messages);
         return;
       }

@@ -65,6 +65,8 @@ const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
 /** No SSE traffic (incl. heartbeats) for this long → treat the stream as dead. */
 const HEARTBEAT_TIMEOUT_MS = 45_000;
+/** A snapshot younger than this is reused instead of re-downloaded (full transcript). */
+const RESYNC_FRESH_MS = 2_000;
 
 function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/$/, "")}${path}`;
@@ -311,6 +313,10 @@ export class RemoteSessionClient implements AgentSession {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private snapshot: AgentSessionSnapshot;
+  /** When the snapshot was last (re)hydrated in full; 0 = never (shell only). */
+  private lastSyncAt = 0;
+  /** Shared in-flight resync so concurrent callers fetch the transcript once. */
+  private resyncInFlight: Promise<void> | null = null;
   private readonly summaryCache = new Map<string, SummaryStreamSnapshot>();
   private readonly toolBufferCache: ToolBufferMap = new Map();
 
@@ -320,11 +326,17 @@ export class RemoteSessionClient implements AgentSession {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.snapshot = options.initialSnapshot ?? emptySnapshot(options.agentId);
     reviveMessageTimestamps(this.snapshot.messages);
+    if (options.initialSnapshot) this.lastSyncAt = Date.now();
   }
 
   /** Refetch full snapshot + remount seeds. Used for lazy connect and manual resync. */
   async refresh(): Promise<void> {
     await this.resync();
+  }
+
+  /** True when the cached snapshot is missing or older than `freshnessMs`. */
+  isSnapshotStale(freshnessMs = RESYNC_FRESH_MS): boolean {
+    return Date.now() - this.lastSyncAt > freshnessMs;
   }
 
   getSnapshot(): AgentSessionSnapshot {
@@ -351,11 +363,26 @@ export class RemoteSessionClient implements AgentSession {
     return await readJson<AgentSessionCommandResult>(response);
   }
 
-  /** Fetch full snapshot + remount seeds. Used at subscribe start and reconnects. */
-  private async resync(): Promise<void> {
+  /**
+   * Fetch full snapshot + remount seeds. Used at subscribe start, reconnects,
+   * and lazy connect. Concurrent callers share one fetch — `host.connect()`
+   * fires an eager refresh while the first subscribe may resync immediately
+   * after; without dedupe that re-downloads the transcript twice.
+   */
+  private resync(): Promise<void> {
+    if (this.resyncInFlight) return this.resyncInFlight;
+    const run = this.doResync().finally(() => {
+      this.resyncInFlight = null;
+    });
+    this.resyncInFlight = run;
+    return run;
+  }
+
+  private async doResync(): Promise<void> {
     const snapRes = await this.fetchImpl(joinUrl(this.baseUrl, `/api/agent/${this.id}/snapshot`));
     this.snapshot = await readJson<AgentSessionSnapshot>(snapRes);
     reviveMessageTimestamps(this.snapshot.messages);
+    this.lastSyncAt = Date.now();
 
     try {
       const sumRes = await this.fetchImpl(joinUrl(this.baseUrl, `/api/agent/${this.id}/summary-streams`));
@@ -383,6 +410,7 @@ export class RemoteSessionClient implements AgentSession {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const connectLoop = async (): Promise<void> => {
+      let firstConnect = true;
       while (!stopped && !stopController.signal.aborted) {
         // Per-connection controller so the liveness watchdog can kill a dead
         // stream without tearing down the whole subscription.
@@ -391,7 +419,13 @@ export class RemoteSessionClient implements AgentSession {
         stopController.signal.addEventListener("abort", onStop, { once: true });
 
         try {
-          await this.resync();
+          // The snapshot is often already fresh: host.create returns it inline
+          // and host.connect() fires an eager refresh (deduped via resync()).
+          // A redundant resync re-downloads the whole transcript — skip it on
+          // the very first connect. Reconnects always resync to heal any
+          // frames missed while the stream was down.
+          if (!firstConnect || this.isSnapshotStale()) await this.resync();
+          firstConnect = false;
           const channels = options?.channels?.length ? `?channels=${options.channels.join(",")}` : "";
           const url = joinUrl(this.baseUrl, `/api/agent/${this.id}/events${channels}`);
           const response = await this.fetchImpl(url, {
