@@ -400,7 +400,12 @@ export class ManagedAgent {
       onEnterRetro: (state) => {
         const steer = buildPlanRetroSteerMessage(state.planFilePath);
         if (this.chatController) {
-          void this.chatController.sendMessage(steer);
+          // followUp, not sendMessage: retro entry fires mid-run (last todo
+          // completed via the todo tool), and the running pump's tool snapshot
+          // was resolved in `executing` where complete_plan is excluded. A
+          // steer would deliver inside the same run → "Unknown tool".
+          // followUp starts a fresh run whose toolset includes complete_plan.
+          this.chatController.followUp(steer);
         }
       },
     });
