@@ -10,20 +10,26 @@ import type { DiffFile } from "@git-diff-view/core";
  */
 const MAX_DIFF_FILE_ENTRIES = 50;
 
-export const useDiffFileCache = createState(() => ({ state: {} as Record<string, DiffFile> }), {
+export const useDiffFileCache = createState(() => ({ state: {} as Record<string, DiffFile>, order: [] as string[] }), {
   withActions: (s) => ({
     setDiffFile: (key: string, value: DiffFile) => {
+      // FIFO by first arrival: only newly seen keys join the queue, so the
+      // oldest-inserted entry is always evicted first. Object.keys insertion
+      // order is unreliable here (re-inserted keys move to the end, numeric
+      // keys sort by value), so keep an explicit order queue.
+      const isNew = !(key in s.state);
       s.state[key] = value;
-      // Insertion-ordered eviction (string keys preserve insertion order).
-      const keys = Object.keys(s.state);
-      if (keys.length > MAX_DIFF_FILE_ENTRIES) {
-        for (const oldest of keys.slice(0, keys.length - MAX_DIFF_FILE_ENTRIES)) {
-          delete s.state[oldest];
-        }
+      if (isNew) s.order.push(key);
+      while (s.order.length > MAX_DIFF_FILE_ENTRIES) {
+        const oldest = s.order.shift();
+        if (oldest !== undefined) delete s.state[oldest];
       }
     },
     getDiffFile: (key: string) => s.state[key],
-    clear: () => (s.state = {}),
+    clear: () => {
+      s.state = {};
+      s.order = [];
+    },
   }),
 });
 
