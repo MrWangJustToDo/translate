@@ -2,6 +2,27 @@
   "name": "@my-agent/app",
   "version": "0.0.1",
   "description": "Shared app components and hooks for My Agent (CLI + Web)",
+  "keywords": ["ai", "agent", "react", "terminal-ui", "tui"],
+  "license": "MIT",
+  "author": {
+    "name": "MrWangJustToDo",
+    "url": "https://github.com/MrWangJustToDo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrWangJustToDo/MyAgent.git",
+    "directory": "packages/app"
+  },
+  "bugs": {
+    "url": "https://github.com/MrWangJustToDo/MyAgent/issues"
+  },
+  "homepage": "https://github.com/MrWangJustToDo/MyAgent#readme",
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -16,6 +37,7 @@
   ],
   "scripts": {
     "build": "tsdown",
+    "prepublishOnly": "pnpm run build",
     "dev": "tsdown --watch",
     "test": "pnpm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",

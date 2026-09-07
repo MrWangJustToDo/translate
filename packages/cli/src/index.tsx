@@ -24,16 +24,23 @@ import { config as loadEnv } from "dotenv";
 import { render } from "ink";
 import { useEffect, useState } from "react";
 
-import { isHelpRequested, parseCliArgs } from "./args.js";
+import { cliVersion, isHelpRequested, isVersionRequested, parseCliArgs } from "./args.js";
 import { readClipboardImage } from "./clipboard.js";
 import { LocalAgentAdapter } from "./local-adapter.js";
 import { TerminalTitle } from "./terminal-title.js";
 
-loadEnv();
+const argv = process.argv.slice(2);
 
-const appConfig = parseCliArgs(process.argv.slice(2));
+if (isVersionRequested(argv)) {
+  console.log(cliVersion());
+  process.exit(0);
+}
 
-if (isHelpRequested(process.argv.slice(2))) {
+loadEnv({ quiet: true });
+
+const appConfig = parseCliArgs(argv);
+
+if (isHelpRequested(argv)) {
   useConfig.getActions().setHelpRequested(true);
 }
 

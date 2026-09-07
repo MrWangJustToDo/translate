@@ -102,6 +102,12 @@ export const Help = () => {
             </Box>
             <Text>Show this help message</Text>
           </Box>
+          <Box>
+            <Box width={24}>
+              <Text color={COLORS.success}>-v, --version</Text>
+            </Box>
+            <Text>Print version and exit</Text>
+          </Box>
         </Box>
       </Box>
 

@@ -2,6 +2,27 @@
   "name": "@my-agent/cli",
   "version": "0.0.1",
   "description": "CLI for My Agent",
+  "keywords": ["ai", "agent", "cli", "coding-assistant", "terminal"],
+  "license": "MIT",
+  "author": {
+    "name": "MrWangJustToDo",
+    "url": "https://github.com/MrWangJustToDo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrWangJustToDo/MyAgent.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/MrWangJustToDo/MyAgent/issues"
+  },
+  "homepage": "https://github.com/MrWangJustToDo/MyAgent#readme",
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
     "my-agent": "./dist/index.mjs"
@@ -12,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsdown",
+    "prepublishOnly": "pnpm run build",
     "dev": "tsdown --watch",
     "start": "node dist/index.mjs",
     "typecheck": "tsc --noEmit"

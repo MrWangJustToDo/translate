@@ -1,4 +1,5 @@
 import { parseModelStyle, resolveModelConnection } from "@my-agent/core";
+import { createRequire } from "node:module";
 
 import { parseModelInfoFromEnv } from "./model-env.js";
 
@@ -199,4 +200,20 @@ export function parseCliArgs(argv: string[]): ParsedCliConfig {
 export const isHelpRequested = (argv: string[]): boolean => {
   const parsed = parseArgs(argv);
   return getFlagBoolean(parsed, "help", "h");
+};
+
+const requireFromCli = createRequire(import.meta.url);
+
+/**
+ * Version string of the installed `@my-agent/cli` package. `dist/index.mjs`
+ * sits next to `package.json` both in the monorepo and in the published
+ * tarball, so this resolves correctly before and after `npm install -g`.
+ */
+export function cliVersion(): string {
+  return (requireFromCli("../package.json") as { version: string }).version;
+}
+
+export const isVersionRequested = (argv: string[]): boolean => {
+  const parsed = parseArgs(argv);
+  return getFlagBoolean(parsed, "version", "v");
 };

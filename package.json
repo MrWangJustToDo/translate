@@ -3,6 +3,23 @@
   "version": "0.0.1",
   "private": true,
   "description": "AI-powered agent with translation, chat, and more using Ollama",
+  "license": "MIT",
+  "author": {
+    "name": "MrWangJustToDo",
+    "url": "https://github.com/MrWangJustToDo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrWangJustToDo/MyAgent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MrWangJustToDo/MyAgent/issues"
+  },
+  "homepage": "https://github.com/MrWangJustToDo/MyAgent#readme",
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=9"
+  },
   "type": "module",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
@@ -21,9 +38,11 @@
     "dev:extension": "pnpm --filter @my-agent/extension dev",
     "dev:server": "pnpm --filter @my-agent/server dev",
     "dev:mcp-server": "pnpm --filter @my-agent/mcp-server dev",
-    "start:cli": "DEV=true NODE_ENV=production DEVTOOL_PATH=10.23.195.101 node --inspect ./main.mjs",
+    "start:cli": "node ./main.mjs",
     "start:server": "NODE_ENV=production node ./server.mjs",
     "start:mcp-server": "cd packages/mcp-server && node ./dist/index.mjs",
+    "publish": "pnpm build && pnpm run publish:only",
+    "publish:only": "pnpm --filter @my-agent/core publish --no-git-checks && pnpm --filter @my-agent/app publish --no-git-checks && pnpm --filter @my-agent/node publish --no-git-checks && pnpm --filter @my-agent/server publish --no-git-checks && pnpm --filter @my-agent/cli publish --no-git-checks",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",

@@ -1,7 +1,7 @@
 # MyAgent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/Node-22%2B-339933?logo=node.js)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/Node-24%2B-339933?logo=node.js)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9%2B-F69220?logo=pnpm)](https://pnpm.io)
 [![TanStack AI](https://img.shields.io/badge/TanStack%20AI-0.48-000000?logo=vercel)](https://tanstack.com/ai)
 
@@ -265,8 +265,24 @@ Check the link https://mrwangjusttodo.github.io/MyAgent/, you can create your ow
 
 ## Quick Start
 
-### Prerequisites
-- Node.js 22+, pnpm 9+
+### Install from npm (CLI)
+
+Install the CLI globally and run it in any directory:
+
+```bash
+npm install -g @my-agent/cli
+
+my-agent                                 # start in the current directory
+my-agent "Explain this codebase"          # start with a prompt
+my-agent --version                        # print installed version
+```
+
+Runtime data (sessions, memory, plans, transcripts, …) is written to `./.agents/` in the directory you run from.
+
+### From source
+
+#### Prerequisites
+- Node.js 24+, pnpm 9+
 
 ```bash
 git clone https://github.com/MrWangJustToDo/MyAgent.git
