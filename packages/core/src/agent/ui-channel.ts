@@ -17,6 +17,7 @@ import {
 import { throwOnRunError } from "./stream/stream-errors.js";
 import { shouldSuppressMessagesSnapshot } from "./stream/suppress-messages-snapshot.js";
 import { shouldSuppressReplayedToolChunk } from "./stream/suppress-replayed-tool-chunks.js";
+import { shouldSuppressStaleTextChunk } from "./stream/suppress-stale-text-chunks.js";
 import { BEGIN_SUMMARY_TOOL_NAME } from "./subagent/begin-summary-tool.js";
 import { summaryStreamKey, type SummaryStreamHub } from "./summary-stream";
 
@@ -291,6 +292,13 @@ export class AgentUIChannel {
     // passthrough for legacy snapshots if suppression is ever relaxed.
     const normalized = normalizeToolCallName(repairMessagesSnapshotChunk(chunk));
     if (shouldSuppressReplayedToolChunk(this.getMessages(), normalized)) {
+      return;
+    }
+    // TanStack >= 0.53 resumeAssistantState: a late chunk with a historical
+    // messageId re-opens the completed assistant message and appends to it.
+    // Drop those (late chunks after abort/finalize, or replays of rendered
+    // content) so stale text cannot resurrect old rows.
+    if (shouldSuppressStaleTextChunk(this.getMessages(), normalized)) {
       return;
     }
     this.trackSummaryStreamPhase(normalized);
