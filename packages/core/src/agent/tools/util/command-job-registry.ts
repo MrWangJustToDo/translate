@@ -32,6 +32,20 @@ export interface CommandJobPollResult {
 }
 
 /** A finished background job surfaced to the model as a completion notification. */
+/**
+ * Max retained chars per stream once a job has finished (older output is
+ * dropped from the head). Generous vs. the 2000-char completion notification
+ * cap, so surfaced content is unaffected.
+ */
+const MAX_FINISHED_OUTPUT_CHARS = 64_000;
+/** Max retained chars per stream for a running job (head-trimmed, never past
+ * the unread region so incremental polling stays lossless). */
+const MAX_RUNNING_OUTPUT_CHARS = 256_000;
+/** Only trim a running stream once it exceeds this length (amortized slicing). */
+const TRIM_THRESHOLD_CHARS = 512_000;
+/** Max finished jobs kept before the oldest (already notified) are evicted. */
+const MAX_FINISHED_JOBS = 50;
+
 export interface CompletedCommandJob {
   id: string;
   command: string;
@@ -80,12 +94,14 @@ class CommandJobRegistry {
     const job = this.jobs.get(jobId);
     if (!job || job.status !== "running") return;
     job.stdout += chunk;
+    this.trimStream(job, "stdout");
   }
 
   appendStderr(jobId: string, chunk: string): void {
     const job = this.jobs.get(jobId);
     if (!job || job.status !== "running") return;
     job.stderr += chunk;
+    this.trimStream(job, "stderr");
   }
 
   markExited(jobId: string, exitCode: number | null): void {
@@ -94,6 +110,7 @@ class CommandJobRegistry {
     job.status = exitCode === 0 || exitCode === null ? "exited" : "exited";
     job.exitCode = exitCode ?? 1;
     job.endedAt = Date.now();
+    this.afterFinished(job);
   }
 
   markFailed(jobId: string, message?: string): void {
@@ -103,6 +120,7 @@ class CommandJobRegistry {
     job.status = "failed";
     job.exitCode = job.exitCode ?? 1;
     job.endedAt = Date.now();
+    this.afterFinished(job);
   }
 
   markKilled(jobId: string): void {
@@ -110,6 +128,72 @@ class CommandJobRegistry {
     if (!job) return;
     job.status = "killed";
     job.endedAt = Date.now();
+    this.afterFinished(job);
+  }
+
+  /**
+   * Shrink memory footprint of a finished job: cap retained output and evict
+   * the oldest already-notified finished jobs. Running jobs are untouched so
+   * incremental poll semantics stay intact.
+   */
+  private afterFinished(job: CommandJobRecord): void {
+    this.trimFinished(job);
+    this.evictOldestFinished();
+  }
+
+  /**
+   * Drop head output beyond {@link MAX_FINISHED_OUTPUT_CHARS} per stream.
+   * Unlike {@link trimStream}, this may cut into the unread region: a finished
+   * job that was never polled keeps only its tail (the completion notification
+   * already caps surfaced output to 2000 chars).
+   */
+  private trimFinished(job: CommandJobRecord): void {
+    if (job.stdout.length > MAX_FINISHED_OUTPUT_CHARS) {
+      const cut = Math.max(job.stdoutReadOffset, job.stdout.length - MAX_FINISHED_OUTPUT_CHARS);
+      job.stdout = job.stdout.slice(cut);
+      job.stdoutReadOffset = Math.max(0, job.stdoutReadOffset - cut);
+    }
+    if (job.stderr.length > MAX_FINISHED_OUTPUT_CHARS) {
+      const cut = Math.max(job.stderrReadOffset, job.stderr.length - MAX_FINISHED_OUTPUT_CHARS);
+      job.stderr = job.stderr.slice(cut);
+      job.stderrReadOffset = Math.max(0, job.stderrReadOffset - cut);
+    }
+  }
+
+  /** Evict oldest finished jobs (already surfaced to the model) beyond the cap. */
+  private evictOldestFinished(): void {
+    const finished: string[] = [];
+    for (const [id, job] of this.jobs) {
+      if (job.status !== "running") finished.push(id);
+    }
+    let excess = finished.length - MAX_FINISHED_JOBS;
+    if (excess <= 0) return;
+    for (const id of finished) {
+      if (excess <= 0) break;
+      if (!this.notifiedJobIds.has(id)) continue;
+      this.jobs.delete(id);
+      this.notifiedJobIds.delete(id);
+      excess--;
+    }
+  }
+
+  /**
+   * Amortized head-trim for a running job's stream. Never cuts into the
+   * unread region, so {@link poll} still returns everything since the last
+   * read cursor.
+   */
+  private trimStream(job: CommandJobRecord, stream: "stdout" | "stderr"): void {
+    const value = job[stream];
+    if (value.length <= TRIM_THRESHOLD_CHARS) return;
+    const offset = stream === "stdout" ? job.stdoutReadOffset : job.stderrReadOffset;
+    const cut = Math.max(offset, value.length - MAX_RUNNING_OUTPUT_CHARS);
+    if (cut <= 0) return;
+    job[stream] = value.slice(cut);
+    if (stream === "stdout") {
+      job.stdoutReadOffset = Math.max(0, job.stdoutReadOffset - cut);
+    } else {
+      job.stderrReadOffset = Math.max(0, job.stderrReadOffset - cut);
+    }
   }
 
   /**
