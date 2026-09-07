@@ -377,18 +377,29 @@ export class RemoteSessionClient implements AgentSession {
     if (this.terminated) {
       return { ok: false, code: "not_found", error: this.terminatedReason || "Session not found on server" };
     }
-    const response = await this.fetchImpl(joinUrl(this.baseUrl, `/api/agent/${this.id}/command`), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(command),
-    });
-    if (response.status === 404) {
-      this.markTerminated("Session not found on server");
-      return { ok: false, code: "not_found", error: "Session not found on server" };
+    try {
+      const response = await this.fetchImpl(joinUrl(this.baseUrl, `/api/agent/${this.id}/command`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (response.status === 404) {
+        this.markTerminated("Session not found on server");
+        return { ok: false, code: "not_found", error: "Session not found on server" };
+      }
+      // State changes propagate via the subscribed channels (state/messages/
+      // usage/todos/plan/...) — no full-snapshot refetch per command.
+      return await readJson<AgentSessionCommandResult>(response);
+    } catch (error) {
+      // Transport failure. The server resolves `send`-style commands only when
+      // the whole run has finished, so a run outlasting the HTTP headers
+      // timeout (~300s, UND_ERR_HEADERS_TIMEOUT) lands here. The run keeps
+      // going server-side and streams over SSE; rejecting instead would crash
+      // fire-and-forget callers with an unhandled rejection.
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[RemoteSessionClient] dispatch transport error: ${message}`);
+      return { ok: false, code: "failed", error: message };
     }
-    // State changes propagate via the subscribed channels (state/messages/
-    // usage/todos/plan/...) — no full-snapshot refetch per command.
-    return await readJson<AgentSessionCommandResult>(response);
   }
 
   /**
