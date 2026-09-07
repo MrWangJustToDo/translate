@@ -321,6 +321,92 @@ async function testSteerWhileRunning() {
   console.log("✓ message while running → dispatch steer");
 }
 
+function textMsg(role, id, text) {
+  return { role, id, createdAt: new Date(), parts: [{ type: "text", content: text }] };
+}
+
+/**
+ * The status flickers `thinking`/`responding`/`running` many times mid-run and
+ * pauses at `awaiting_user` for ask_user. Only a finished run (`completed` /
+ * `error` / `aborted`) may finalize — finalizing earlier freezes the
+ * placeholder and unsubscribes, so the reply only surfaces one message later.
+ */
+async function testNoPrematureFinalizeOnStatusFlicker() {
+  const { adapter, host } = await startBridge();
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "run", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  for (const status of ["thinking", "responding", "running", "thinking", "awaiting_user", "running"]) {
+    session.state.status = status;
+    session.emit("state", { status });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 700)); // > IDLE_FINALIZE_DELAY_MS
+
+  // The cycle must still be live: a messages event still edits the placeholder.
+  session.state.messages = [textMsg("user", "u1", "run"), textMsg("assistant", "a1", "streamed content")];
+  session.emit("messages", session.state.messages);
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.text.includes("streamed content")),
+    2000,
+    "placeholder still streaming after status flicker"
+  );
+
+  // Only a finished run finalizes.
+  session.state.status = "completed";
+  session.emit("state", { status: "completed" });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.ok(adapter.edits.at(-1).text.includes("streamed content"), "final content rendered on completion");
+
+  // After finalize the updater is closed and the subscription torn down.
+  const editsAfterFinalize = adapter.edits.length;
+  session.state.messages = [...session.state.messages, textMsg("assistant", "a2", "LATE")];
+  session.emit("messages", session.state.messages);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.ok(
+    !adapter.edits.slice(editsAfterFinalize).some((entry) => entry.text.includes("LATE")),
+    "updater closed and unsubscribed after finalize"
+  );
+  console.log("✓ status flicker (thinking/responding/awaiting_user) does not finalize; completed does");
+}
+
+/**
+ * The new user message lands asynchronously over SSE (remote host). Rendering
+ * the stale snapshot at cycle start would flash the PREVIOUS run until the
+ * first event of the current run arrives.
+ */
+async function testNoStaleInitialRender() {
+  const { adapter, host } = await startBridge();
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "first", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "first placeholder");
+  session.state.status = "completed";
+  session.emit("state", { status: "completed" });
+  await new Promise((resolve) => setTimeout(resolve, 700)); // first cycle finalized
+
+  // Previous run sits in the snapshot; the new user message has NOT landed yet
+  // (the fake host's dispatch does not mutate messages — mirrors remote SSE lag).
+  session.state.messages = [textMsg("user", "u1", "first"), textMsg("assistant", "a1", "PREVIOUS RUN")];
+
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "second", raw: null });
+  await waitFor(() => adapter.sent.length === 2, 2000, "second placeholder");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.ok(
+    !adapter.edits.some((entry) => entry.text.includes("PREVIOUS RUN")),
+    "new placeholder must not flash the previous run from a stale snapshot"
+  );
+
+  // Once the current run lands (fresh SSE connection's first payload), it renders.
+  session.state.messages = [
+    ...session.state.messages,
+    textMsg("user", "u2", "second"),
+    textMsg("assistant", "a2", "CURRENT RUN"),
+  ];
+  session.emit("messages", session.state.messages);
+  await waitFor(() => adapter.edits.some((entry) => entry.text.includes("CURRENT RUN")), 2000, "current run render");
+  console.log("✓ stale snapshot does not flash the previous run on a new placeholder");
+}
+
 async function testRestartRecovery() {
   const dir = join(tmpBase, "recovery");
   const config = makeConfig({ IM_BRIDGE_DATA_DIR: dir });
@@ -387,6 +473,8 @@ const tests = [
   testTtlAutoDeny,
   testAllowlistRejection,
   testSteerWhileRunning,
+  testNoPrematureFinalizeOnStatusFlicker,
+  testNoStaleInitialRender,
   testRestartRecovery,
   testSplitter,
   testFinalizeSplit,

@@ -47,6 +47,19 @@ interface ReplyCycle {
 }
 
 const IDLE_FINALIZE_DELAY_MS = 500;
+
+/**
+ * Statuses that mean a run has really ended (or was never started).
+ *
+ * NOT everything ≠ "running": mid-run the status flickers through
+ * `thinking` / `responding` / `waiting` / `awaiting_user` (ask_user pause) /
+ * `compacting` — finalizing on those freezes the placeholder and tears down
+ * the subscription while the run is still producing content, so the reply
+ * only surfaces one message later (stale snapshot on the next cycle).
+ */
+function isRunFinished(status: string): boolean {
+  return status === "completed" || status === "error" || status === "aborted" || status === "idle";
+}
 export class BridgeRuntime {
   private readonly config: BridgeConfig;
   private readonly adapter: ChatAdapter;
@@ -134,16 +147,21 @@ export class BridgeRuntime {
       }
       await this.finalizeCycle(msg.platform, msg.chat);
 
+      // Snapshot BEFORE dispatch: the new user message lands asynchronously
+      // over SSE (remote host), so rendering right after dispatch would show
+      // the previous run until the first event of this run arrives.
+      const beforeDispatch = session.getSnapshot().messages;
       const result = await this.dispatch(session, { type: "send", content: msg.text });
       if (!result.ok && result.code === "not_found") {
         // Stale mapping (e.g. server restarted) — heal and retry once.
         this.resolver.invalidate(msg.platform, msg.chat);
         const healed = await this.resolveSession(msg);
+        const healedBefore = healed.session.getSnapshot().messages;
         await this.dispatch(healed.session, { type: "send", content: msg.text });
-        this.beginReplyCycle(healed.session, msg);
+        this.beginReplyCycle(healed.session, msg, healedBefore);
         return;
       }
-      this.beginReplyCycle(session, msg);
+      this.beginReplyCycle(session, msg, beforeDispatch);
     } catch (error) {
       this.onError(error);
       await this.safeSendText(msg.chat, `⚠️ ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
@@ -169,7 +187,7 @@ export class BridgeRuntime {
   // Outbound (reply cycles)
   // ---------------------------------------------------------------------------
 
-  private beginReplyCycle(session: AgentSession, msg: InboundMessage): void {
+  private beginReplyCycle(session: AgentSession, msg: InboundMessage, beforeDispatch?: UIMessage[]): void {
     const chatKey = sessionKeyOf(msg.platform, msg.chat);
     // One reply cycle per chat: an in-flight creation (double message, race
     // between sendText and the map insert) reuses the existing cycle instead
@@ -194,8 +212,16 @@ export class BridgeRuntime {
           finalizeTimer: null,
           registered: new Set(),
         };
-        // First render in case events already flew by between dispatch and subscribe.
-        this.renderCycle(cycle, session.getSnapshot().messages as UIMessage[]);
+        // Seed the placeholder only when the snapshot already moved past the
+        // pre-dispatch state (in-process host updates synchronously). Remote
+        // SSE lands asynchronously — rendering the stale snapshot here would
+        // flash the PREVIOUS run until this run's first event arrives. The
+        // fresh SSE connection's first messages payload is a full baseline,
+        // so the run's content lands via renderCycle regardless.
+        const snapshotMessages = session.getSnapshot().messages;
+        if (beforeDispatch !== undefined && snapshotMessages !== beforeDispatch) {
+          this.renderCycle(cycle, snapshotMessages as UIMessage[]);
+        }
         return cycle;
       })
       .catch((error) => {
@@ -214,7 +240,7 @@ export class BridgeRuntime {
       }
       if (event.channel === "state") {
         const snapshot = this.activeSessions.get(cycle.chatKey)?.getSnapshot();
-        if (snapshot && snapshot.status !== "running") this.scheduleFinalize(cycle);
+        if (snapshot && isRunFinished(snapshot.status)) this.scheduleFinalize(cycle);
       }
     } catch (error) {
       this.onError(error);
