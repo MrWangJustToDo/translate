@@ -47,7 +47,6 @@ interface ReplyCycle {
 }
 
 const IDLE_FINALIZE_DELAY_MS = 500;
-
 export class BridgeRuntime {
   private readonly config: BridgeConfig;
   private readonly adapter: ChatAdapter;
@@ -59,7 +58,8 @@ export class BridgeRuntime {
 
   /** chatKey → live session, used by button callbacks and TTL expiry. */
   private readonly activeSessions = new Map<string, AgentSession>();
-  private readonly cycles = new Map<string, ReplyCycle>();
+  /** chatKey → cycle creation (placeholder send is async; dedupes double-begin). */
+  private readonly cycles = new Map<string, Promise<ReplyCycle>>();
   private started = false;
 
   constructor(options: BridgeRuntimeOptions) {
@@ -87,8 +87,12 @@ export class BridgeRuntime {
     if (!this.started) return;
     this.started = false;
     this.pending.clear();
-    for (const cycle of this.cycles.values()) this.teardownCycle(cycle);
+    const creations = [...this.cycles.values()];
     this.cycles.clear();
+    for (const creation of creations) {
+      const cycle = await creation.catch(() => null);
+      if (cycle) this.teardownCycle(cycle);
+    }
     await this.adapter.stop();
   }
 
@@ -116,15 +120,21 @@ export class BridgeRuntime {
         return;
       }
 
-      await this.finalizeCycle(msg.platform, msg.chat);
       void this.adapter.setTyping?.(msg.chat).catch(() => {});
 
       const { session } = await this.resolveSession(msg);
       const running = session.getSnapshot().status === "running";
-      const command: AgentSessionCommand = running
-        ? { type: "steer", content: msg.text }
-        : { type: "send", content: msg.text };
-      const result = await this.dispatch(session, command);
+      if (running) {
+        // Steer into the running cycle. Finalizing + a new placeholder here
+        // would split one run across multiple chat messages AND re-register
+        // its pending interactions as duplicate (dead) button rows — the old
+        // buttons stay clickable-looking but resolve to "expired".
+        await this.dispatch(session, { type: "steer", content: msg.text });
+        return;
+      }
+      await this.finalizeCycle(msg.platform, msg.chat);
+
+      const result = await this.dispatch(session, { type: "send", content: msg.text });
       if (!result.ok && result.code === "not_found") {
         // Stale mapping (e.g. server restarted) — heal and retry once.
         this.resolver.invalidate(msg.platform, msg.chat);
@@ -161,10 +171,13 @@ export class BridgeRuntime {
 
   private beginReplyCycle(session: AgentSession, msg: InboundMessage): void {
     const chatKey = sessionKeyOf(msg.platform, msg.chat);
-    // Placeholder message, edited in place as content streams in.
-    void this.adapter
+    // One reply cycle per chat: an in-flight creation (double message, race
+    // between sendText and the map insert) reuses the existing cycle instead
+    // of spawning a second placeholder streaming the same run.
+    if (this.cycles.has(chatKey)) return;
+    const creation: Promise<ReplyCycle> = this.adapter
       .sendText(msg.chat, "⏳")
-      .then((reply) => {
+      .then((reply): ReplyCycle => {
         const cycle: ReplyCycle = {
           chatKey,
           chat: msg.chat,
@@ -181,13 +194,16 @@ export class BridgeRuntime {
           finalizeTimer: null,
           registered: new Set(),
         };
-        this.cycles.set(chatKey, cycle);
         // First render in case events already flew by between dispatch and subscribe.
         this.renderCycle(cycle, session.getSnapshot().messages as UIMessage[]);
+        return cycle;
       })
       .catch((error) => {
+        if (this.cycles.get(chatKey) === creation) this.cycles.delete(chatKey);
         this.onError(error);
+        throw error;
       });
+    this.cycles.set(chatKey, creation);
   }
 
   private onSessionEvent(cycle: ReplyCycle, event: { channel: string; payload: unknown }): void {
@@ -251,7 +267,9 @@ export class BridgeRuntime {
   }
 
   private async finalizeCycle(platform: string, chat: ChatTarget): Promise<void> {
-    const cycle = this.cycles.get(sessionKeyOf(platform, chat));
+    const creation = this.cycles.get(sessionKeyOf(platform, chat));
+    if (!creation) return;
+    const cycle = await creation.catch(() => null);
     if (cycle) await this.finalizeCycleObject(cycle);
   }
 
@@ -260,7 +278,7 @@ export class BridgeRuntime {
       clearTimeout(cycle.finalizeTimer);
       cycle.finalizeTimer = null;
     }
-    if (this.cycles.get(cycle.chatKey) === cycle) this.cycles.delete(cycle.chatKey);
+    this.cycles.delete(cycle.chatKey);
     cycle.updater.update(renderReply(this.activeSessionMessages(cycle.chatKey)).text || "✅ done");
     try {
       await cycle.updater.finalize();

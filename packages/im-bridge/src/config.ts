@@ -27,8 +27,8 @@ export const bridgeConfigSchema = z.object({
   model: z.string().optional(),
   /** Min interval between streaming edits in ms. */
   editIntervalMs: z.number().int().positive().default(3000),
-  /** Pending approval / ask_user TTL in ms (auto-deny on expiry). */
-  approvalTtlMs: z.number().int().positive().default(60_000),
+  /** Pending approval / ask_user TTL in ms (auto-deny on expiry). 5 min — IM users answer async. */
+  approvalTtlMs: z.number().int().positive().default(300_000),
   /** Prefix for created agent session names (display only). */
   sessionNamePrefix: z.string().default("im"),
 });

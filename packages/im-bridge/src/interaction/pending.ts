@@ -61,7 +61,8 @@ export class PendingInteractionStore {
       ];
     }
     return pending.options.map((option, index) => ({
-      label: option,
+      // Long option text must stay a usable label (platform button caps ~64 chars).
+      label: option.length > 60 ? `${option.slice(0, 59)}…` : option,
       data: encodeButtonPayload({ a: "o", r: requestId, i: index }),
     }));
   }
