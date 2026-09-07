@@ -130,6 +130,14 @@ export interface SessionData {
    */
   journalSeq?: number;
   /**
+   * Epoch ms when a live agent last *reserved* this (still-empty) session for
+   * startup reuse. Lets a second process/agent skip a concurrently reused
+   * session whose live owner is not visible to it (cross-process ownership is
+   * intentionally not shared). The window expires on its own if the reserving
+   * process crashed, keeping "live-exclusive" semantics. Not surfaced to hosts.
+   */
+  reservedAt?: number;
+  /**
    * @deprecated Legacy field renamed to `autoMode`. Kept for backward compatibility
    * with sessions persisted before the rename. New sessions use `autoMode`.
    */

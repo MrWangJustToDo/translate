@@ -83,6 +83,10 @@ async function restoreInitialMessages(
     if (store) {
       const empty = await store.getLatestEmpty();
       if (empty) {
+        // Reserve the id on disk BEFORE restoring so a second process/agent
+        // starting concurrently (cross-process ownership is not shared) skips
+        // it and picks a different empty session or creates a fresh one.
+        await store.reserveSession(empty.id);
         const data = await managed.restoreSession(empty.id);
         return data.uiMessages;
       }

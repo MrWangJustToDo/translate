@@ -146,4 +146,40 @@ assert.equal(loaded.name, "after-failure");
   assert.notEqual(onlyUsed.id, used.id);
 }
 
+// ----------------------------------------------------------------------------
+// reserveSession: a concurrently reused empty session must be skipped by
+// getLatestEmpty until its reservation window expires (cross-process guard),
+// and reservation is a no-op for sessions that already have user messages.
+// ----------------------------------------------------------------------------
+{
+  const candidate = store.create({ modelStyle: "openai", model: "m", name: "reserved-candidate" });
+  await store.save(candidate);
+
+  // Reserve hides the session from getLatestEmpty.
+  await store.reserveSession(candidate.id);
+  const afterReserve = await store.getLatestEmpty();
+  assert.ok(afterReserve, "another reusable empty session must still be found");
+  assert.notEqual(afterReserve.id, candidate.id, "reserved session must not be selected");
+
+  // Reservation persists to disk (survives a fresh store instance).
+  const fresh = new SessionStore();
+  const viaFresh = await fresh.getLatestEmpty();
+  assert.notEqual(viaFresh.id, candidate.id, "reservation must be visible across store instances");
+
+  // Expiring the reservation makes the session reusable again (crash self-heal).
+  const loaded = await store.load(candidate.id);
+  loaded.reservedAt = Date.now() - 6 * 60 * 1000; // older than the 5-min window
+  await store.save(loaded);
+  const afterExpiry = await store.getLatestEmpty();
+  assert.equal(afterExpiry.id, candidate.id, "expired reservation must be selectable again");
+
+  // Reserve is a no-op once the session has user messages.
+  const usedReserve = store.create({ modelStyle: "openai", model: "m", name: "used-reserve" });
+  usedReserve.uiMessages = [{ id: "u1", role: "user", parts: [{ type: "text", content: "hi" }] }];
+  await store.save(usedReserve);
+  await store.reserveSession(usedReserve.id);
+  const loadedUsed = await store.load(usedReserve.id);
+  assert.equal(loadedUsed.reservedAt, undefined, "reserve must not touch used sessions");
+}
+
 console.log("session-store-errors validation passed");

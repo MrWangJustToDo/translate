@@ -30,6 +30,15 @@ import type { SessionData, SessionMeta } from "./types.js";
 /** Default empty token usage */
 const EMPTY_USAGE = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
+/**
+ * How long a startup-reused empty session stays reserved before another
+ * process may select it again. Cross-process live ownership is not shared, so
+ * the reservation is the only cross-process signal; the window must cover
+ * "launch two terminals back-to-back" while still releasing itself after a
+ * crash (no stale locks to clean up).
+ */
+const EMPTY_SESSION_RESERVE_MS = 5 * 60_000;
+
 // ============================================================================
 // SessionStore Class
 // ============================================================================
@@ -177,16 +186,34 @@ export class SessionStore {
 
   /**
    * Find the most recently updated session that has never been used (contains
-   * no user messages). Lets hosts reuse the leftover empty session from a
-   * previous startup instead of creating a fresh one.
+   * no user messages) and is not currently reserved by a concurrent live agent.
+   * Lets hosts reuse the leftover empty session from a previous startup instead
+   * of creating a fresh one, without racing another process onto the same id.
    */
   async getLatestEmpty(): Promise<SessionData | null> {
     const metas = await this.list();
+    const now = Date.now();
     for (const meta of metas) {
       const data = await this.load(meta.id);
-      if (data && !data.uiMessages.some((m) => m.role === "user")) return data;
+      if (!data || data.uiMessages.some((m) => m.role === "user")) continue;
+      if (data.reservedAt && now - data.reservedAt < EMPTY_SESSION_RESERVE_MS) continue;
+      return data;
     }
     return null;
+  }
+
+  /**
+   * Mark a still-empty session as taken by this live agent so a second
+   * process/agent does not select the same id during startup reuse. The mark
+   * persists to disk and expires after {@link EMPTY_SESSION_RESERVE_MS},
+   * self-healing if the reserving process crashes. No-op when the session is
+   * no longer empty (then it is simply never selected again).
+   */
+  async reserveSession(id: string): Promise<void> {
+    const session = await this.load(id);
+    if (!session || session.uiMessages.some((m) => m.role === "user")) return;
+    session.reservedAt = Date.now();
+    await this.save(session);
   }
 
   /**
