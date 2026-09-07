@@ -18,6 +18,7 @@ export {
   findToolCallPart,
   shouldSuppressReplayedToolChunk,
 } from "../agent/stream/suppress-replayed-tool-chunks.js";
+export { shouldSuppressStaleTextChunk } from "../agent/stream/suppress-stale-text-chunks.js";
 export { shouldSuppressMessagesSnapshot } from "../agent/stream/suppress-messages-snapshot.js";
 export { PendingMessageQueue } from "../agent/queue/pending-message-queue.js";
 export type { QueueMode } from "../agent/queue/pending-message-queue.js";

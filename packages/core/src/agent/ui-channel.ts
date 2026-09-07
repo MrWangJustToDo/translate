@@ -128,6 +128,14 @@ export class AgentUIChannel {
   private activeSummaryKey?: string;
   private onUpdate?: (messages: TanStackUIMessage[]) => void;
   private summaryStreamState: TaskSummaryStreamState = { summaryPhaseUnlocked: false };
+  /**
+   * Message ids that existed before the current run started. Late/replayed
+   * TEXT chunks referencing these must be dropped (see shouldSuppressStaleTextChunk):
+   * TanStack >= 0.53 `resumeAssistantState` would otherwise reopen the completed
+   * assistant row and append to it. Refreshed at every run boundary
+   * (consumeRun / setMessages / clearMessages), never mid-run.
+   */
+  private historicalMessageIds: ReadonlySet<string> = new Set();
   /** Active agent-loop turn assistant message (per-turn streaming scope). */
   private currentTurnMessageId?: string;
   /** Monotonic revision bumped on every messages change (wire projection cache). */
@@ -144,6 +152,9 @@ export class AgentUIChannel {
   }
 
   constructor(options: AgentUIChannelOptions = {}) {
+    if (options.initialMessages?.length) {
+      this.historicalMessageIds = new Set(options.initialMessages.map((message) => message.id));
+    }
     this.processor = new StreamProcessor({
       initialMessages: options.initialMessages,
       events: {
@@ -178,10 +189,12 @@ export class AgentUIChannel {
 
   setMessages(messages: TanStackUIMessage[]): void {
     this.processor.setMessages(messages);
+    this.historicalMessageIds = new Set(messages.map((message) => message.id));
   }
 
   clearMessages(): void {
     this.processor.clearMessages();
+    this.historicalMessageIds = new Set();
   }
 
   addUserMessage(content: string | ContentPart[], id?: string): TanStackUIMessage {
@@ -297,8 +310,12 @@ export class AgentUIChannel {
     // TanStack >= 0.53 resumeAssistantState: a late chunk with a historical
     // messageId re-opens the completed assistant message and appends to it.
     // Drop those (late chunks after abort/finalize, or replays of rendered
-    // content) so stale text cannot resurrect old rows.
-    if (shouldSuppressStaleTextChunk(this.getMessages(), normalized)) {
+    // content) so stale text cannot resurrect old rows. The predicate is the
+    // run-boundary snapshot (historicalMessageIds), NOT the live messages
+    // array — within a run the first TEXT chunk materializes its message
+    // immediately, so live-membership would suppress every legitimate delta
+    // of the active message (and after abort + resend, the new reply too).
+    if (shouldSuppressStaleTextChunk(this.historicalMessageIds, normalized)) {
       return;
     }
     this.trackSummaryStreamPhase(normalized);
@@ -313,6 +330,9 @@ export class AgentUIChannel {
     if (cleaned.length !== this.processor.getMessages().length) {
       this.processor.setMessages(cleaned);
     }
+    // End of run: everything now materialized becomes historical for the next
+    // one (matters when the next stream is fed via processChunk directly).
+    this.historicalMessageIds = new Set(this.getMessages().map((message) => message.id));
   }
 
   /**
@@ -330,6 +350,10 @@ export class AgentUIChannel {
     // clears stream state while keeping messages, restoring 0.48 semantics where
     // the fallback only saw the (cleared) active set.
     this.processor.prepareAssistantMessage();
+    // Run boundary: everything materialized up to now is historical for this
+    // run. Stale-chunk suppression keys off this snapshot so in-run deltas of
+    // the active message are never mistaken for late/replayed chunks.
+    this.historicalMessageIds = new Set(this.getMessages().map((message) => message.id));
 
     try {
       for await (const chunk of throwOnRunError(options.stream)) {
