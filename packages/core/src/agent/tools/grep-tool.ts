@@ -432,8 +432,11 @@ export const createGrepTool = () => {
         const cached = await maybeCacheOutput(fullMatchText, `${toolCallId}-grep`);
         const { cachedOutputPath } = cached;
 
+        // matches always carries the requested page (structured metadata for the UI
+        // and external_* consumers) — `content` holds the model preview (cached head/tail
+        // for large results) and `cachedOutputPath` the full text on disk.
         return {
-          matches: cachedOutputPath ? [] : paginatedMatches,
+          matches: paginatedMatches,
           content: cached.content,
           offset: skip,
           limit: take,

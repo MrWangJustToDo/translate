@@ -185,8 +185,11 @@ export const createGlobTool = () => {
         const cached = await maybeCacheOutput(fullOutputText, `${toolCallId}-glob`);
         const { cachedOutputPath } = cached;
 
+        // files always carries the requested page (structured metadata for the UI
+        // and external_* consumers) — `content` holds the model preview (cached
+        // head/tail for large results) and `cachedOutputPath` the full list on disk.
         return {
-          files: cachedOutputPath ? [] : paginatedFiles,
+          files: paginatedFiles,
           content: cached.content,
           offset: skip,
           limit: take,
