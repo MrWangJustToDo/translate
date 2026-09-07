@@ -312,6 +312,16 @@ export class AgentUIChannel {
    */
   async consumeRun(options: ConsumeRunOptions): Promise<TanStackUIMessage[]> {
     this.beginSummaryStream(options);
+    // TanStack >= 0.53: getActiveAssistantMessageId() gained a fallback over ALL
+    // retained messageStates, but finalizeStream() only clears activeMessageIds.
+    // Our consumeRun is incremental (never calls processor.process()), so without
+    // a per-run reset a new turn whose first content chunk carries no usable id
+    // (tool-first response without preceding text, or client-tool result replay)
+    // resumes the PREVIOUS turn's assistant message and appends the new output
+    // there — i.e. above the just-sent user message. prepareAssistantMessage()
+    // clears stream state while keeping messages, restoring 0.48 semantics where
+    // the fallback only saw the (cleared) active set.
+    this.processor.prepareAssistantMessage();
 
     try {
       for await (const chunk of throwOnRunError(options.stream)) {
