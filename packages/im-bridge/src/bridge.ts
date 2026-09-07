@@ -39,7 +39,12 @@ interface ReplyCycle {
   chat: ChatTarget;
   /** User that started the cycle — allowed to answer its interactions. */
   userId: string;
-  updater: StreamUpdater;
+  /** null until the placeholder message resolves; renders buffer meanwhile. */
+  updater: StreamUpdater | null;
+  /** Latest render while `updater` is null; the final text once retired. */
+  pendingText: string;
+  /** Retired (finalized / healed over) — late events and edits are ignored. */
+  closed: boolean;
   unsubscribe: () => void;
   finalizeTimer: ReturnType<typeof setTimeout> | null;
   /** Interaction ids already registered as buttons on this cycle. */
@@ -49,16 +54,18 @@ interface ReplyCycle {
 const IDLE_FINALIZE_DELAY_MS = 500;
 
 /**
- * Statuses that mean a run has really ended (or was never started).
+ * Statuses that mean a run has really finished.
  *
- * NOT everything ≠ "running": mid-run the status flickers through
- * `thinking` / `responding` / `waiting` / `awaiting_user` (ask_user pause) /
- * `compacting` — finalizing on those freezes the placeholder and tears down
- * the subscription while the run is still producing content, so the reply
- * only surfaces one message later (stale snapshot on the next cycle).
+ * NOT everything ≠ "running", and NOT "idle": the server emits a reconcile
+ * `idle` right after the user message lands (BEFORE the pump flips to
+ * `running`), and mid-run it flickers through `thinking` / `responding` /
+ * `waiting` / `awaiting_user` (ask_user pause) / `compacting`. Finalizing on
+ * any of those freezes the placeholder and tears down the subscription while
+ * the run is still producing content, so the reply only surfaces one message
+ * later (stale snapshot on the next cycle).
  */
 function isRunFinished(status: string): boolean {
-  return status === "completed" || status === "error" || status === "aborted" || status === "idle";
+  return status === "completed" || status === "error" || status === "aborted";
 }
 export class BridgeRuntime {
   private readonly config: BridgeConfig;
@@ -71,8 +78,8 @@ export class BridgeRuntime {
 
   /** chatKey → live session, used by button callbacks and TTL expiry. */
   private readonly activeSessions = new Map<string, AgentSession>();
-  /** chatKey → cycle creation (placeholder send is async; dedupes double-begin). */
-  private readonly cycles = new Map<string, Promise<ReplyCycle>>();
+  /** chatKey → live reply cycle (subscription established synchronously). */
+  private readonly cycles = new Map<string, ReplyCycle>();
   private started = false;
 
   constructor(options: BridgeRuntimeOptions) {
@@ -90,7 +97,14 @@ export class BridgeRuntime {
   async start(): Promise<void> {
     if (this.started) return;
     await this.resolver.init();
-    this.adapter.onMessage((msg) => this.handleMessage(msg));
+    this.adapter.onMessage((msg) => {
+      // Fire-and-forget: dispatch(send) blocks server-side until the whole run
+      // finishes — awaiting it in the adapter's update loop would stall
+      // steering and /stop for the run's entire duration.
+      const handled = this.handleMessage(msg);
+      handled.catch(() => {});
+      return Promise.resolve();
+    });
     this.adapter.onButton((cb) => this.handleButton(cb));
     await this.adapter.start();
     this.started = true;
@@ -100,12 +114,11 @@ export class BridgeRuntime {
     if (!this.started) return;
     this.started = false;
     this.pending.clear();
-    const creations = [...this.cycles.values()];
-    this.cycles.clear();
-    for (const creation of creations) {
-      const cycle = await creation.catch(() => null);
-      if (cycle) this.teardownCycle(cycle);
+    for (const cycle of this.cycles.values()) {
+      cycle.closed = true;
+      this.teardownCycle(cycle);
     }
+    this.cycles.clear();
     await this.adapter.stop();
   }
 
@@ -147,21 +160,38 @@ export class BridgeRuntime {
       }
       await this.finalizeCycle(msg.platform, msg.chat);
 
-      // Snapshot BEFORE dispatch: the new user message lands asynchronously
-      // over SSE (remote host), so rendering right after dispatch would show
-      // the previous run until the first event of this run arrives.
-      const beforeDispatch = session.getSnapshot().messages;
-      const result = await this.dispatch(session, { type: "send", content: msg.text });
-      if (!result.ok && result.code === "not_found") {
-        // Stale mapping (e.g. server restarted) — heal and retry once.
-        this.resolver.invalidate(msg.platform, msg.chat);
-        const healed = await this.resolveSession(msg);
-        const healedBefore = healed.session.getSnapshot().messages;
-        await this.dispatch(healed.session, { type: "send", content: msg.text });
-        this.beginReplyCycle(healed.session, msg, healedBefore);
+      // The reply cycle — and its SSE subscription — must exist BEFORE the
+      // dispatch: the server runs the agent synchronously, so dispatch(send)
+      // resolves only when the whole run has finished. A subscription created
+      // after dispatch would miss EVERY messages/state event of the run and
+      // the placeholder would stay stale until the next message's resync.
+      const cycle = this.beginReplyCycle(session, msg);
+      if (cycle === null) {
+        // A cycle is already live (double-message race) — inject as steer.
+        await this.dispatch(session, { type: "steer", content: msg.text });
         return;
       }
-      this.beginReplyCycle(session, msg, beforeDispatch);
+
+      const result = await this.dispatch(session, { type: "send", content: msg.text });
+      if (!result.ok && result.code === "not_found") {
+        // Stale mapping (e.g. server restarted) — retire the premature cycle,
+        // heal and retry once.
+        await this.retireCycle(cycle, "⚠️ session expired, retrying…");
+        this.resolver.invalidate(msg.platform, msg.chat);
+        const healed = await this.resolveSession(msg);
+        const healedCycle = this.beginReplyCycle(healed.session, msg);
+        if (healedCycle) await this.dispatch(healed.session, { type: "send", content: msg.text });
+        return;
+      }
+      if (!result.ok) {
+        // Transport failures (e.g. the blocking dispatch outlasting the HTTP
+        // headers timeout) happen WHILE the run is live — the SSE cycle keeps
+        // streaming, so only retire when no run is actually going.
+        if (isRunFinished(session.getSnapshot().status)) {
+          const detail = result.error ?? "dispatch failed";
+          await this.retireCycle(cycle, `⚠️ ${detail.slice(0, 300)}`);
+        }
+      }
     } catch (error) {
       this.onError(error);
       await this.safeSendText(msg.chat, `⚠️ ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
@@ -187,49 +217,52 @@ export class BridgeRuntime {
   // Outbound (reply cycles)
   // ---------------------------------------------------------------------------
 
-  private beginReplyCycle(session: AgentSession, msg: InboundMessage, beforeDispatch?: UIMessage[]): void {
+  private beginReplyCycle(session: AgentSession, msg: InboundMessage): ReplyCycle | null {
     const chatKey = sessionKeyOf(msg.platform, msg.chat);
     // One reply cycle per chat: an in-flight creation (double message, race
     // between sendText and the map insert) reuses the existing cycle instead
     // of spawning a second placeholder streaming the same run.
-    if (this.cycles.has(chatKey)) return;
-    const creation: Promise<ReplyCycle> = this.adapter
+    if (this.cycles.has(chatKey)) return null;
+    // Subscribe SYNCHRONOUSLY (before any dispatch) so no run event is missed;
+    // the placeholder message goes out in parallel and edits flush once it
+    // resolves (buffered in `pendingText` until then).
+    const cycle: ReplyCycle = {
+      chatKey,
+      chat: msg.chat,
+      userId: msg.userId,
+      updater: null,
+      pendingText: "",
+      closed: false,
+      unsubscribe: session.subscribe((event) => this.onSessionEvent(cycle, event), {
+        channels: ["messages", "state"],
+      }),
+      finalizeTimer: null,
+      registered: new Set(),
+    };
+    this.cycles.set(chatKey, cycle);
+    void this.adapter
       .sendText(msg.chat, "⏳")
-      .then((reply): ReplyCycle => {
-        const cycle: ReplyCycle = {
-          chatKey,
-          chat: msg.chat,
-          userId: msg.userId,
-          updater: new StreamUpdater({
-            adapter: this.adapter,
-            reply,
-            editIntervalMs: this.config.editIntervalMs,
-            onError: this.onError,
-          }),
-          unsubscribe: session.subscribe((event) => this.onSessionEvent(cycle, event), {
-            channels: ["messages", "state"],
-          }),
-          finalizeTimer: null,
-          registered: new Set(),
-        };
-        // Seed the placeholder only when the snapshot already moved past the
-        // pre-dispatch state (in-process host updates synchronously). Remote
-        // SSE lands asynchronously — rendering the stale snapshot here would
-        // flash the PREVIOUS run until this run's first event arrives. The
-        // fresh SSE connection's first messages payload is a full baseline,
-        // so the run's content lands via renderCycle regardless.
-        const snapshotMessages = session.getSnapshot().messages;
-        if (beforeDispatch !== undefined && snapshotMessages !== beforeDispatch) {
-          this.renderCycle(cycle, snapshotMessages as UIMessage[]);
+      .then((reply) => {
+        const updater = new StreamUpdater({
+          adapter: this.adapter,
+          reply,
+          editIntervalMs: this.config.editIntervalMs,
+          onError: this.onError,
+        });
+        cycle.updater = updater;
+        if (cycle.closed) {
+          updater.update(cycle.pendingText || "✅ done");
+          void updater.finalize().catch(() => {});
+        } else if (cycle.pendingText) {
+          updater.update(cycle.pendingText);
         }
-        return cycle;
       })
       .catch((error) => {
-        if (this.cycles.get(chatKey) === creation) this.cycles.delete(chatKey);
+        if (this.cycles.get(chatKey) === cycle) this.cycles.delete(chatKey);
+        cycle.unsubscribe();
         this.onError(error);
-        throw error;
       });
-    this.cycles.set(chatKey, creation);
+    return cycle;
   }
 
   private onSessionEvent(cycle: ReplyCycle, event: { channel: string; payload: unknown }): void {
@@ -258,7 +291,8 @@ export class BridgeRuntime {
       void this.postInteractionMessage(cycle, pending);
     }
     // The streaming message shows assistant text + tool status lines only.
-    cycle.updater.update(rendered.text);
+    if (cycle.updater) cycle.updater.update(rendered.text);
+    else cycle.pendingText = rendered.text;
   }
 
   private async postInteractionMessage(cycle: ReplyCycle, pending: PendingInteraction): Promise<void> {
@@ -293,26 +327,34 @@ export class BridgeRuntime {
   }
 
   private async finalizeCycle(platform: string, chat: ChatTarget): Promise<void> {
-    const creation = this.cycles.get(sessionKeyOf(platform, chat));
-    if (!creation) return;
-    const cycle = await creation.catch(() => null);
+    const cycle = this.cycles.get(sessionKeyOf(platform, chat));
     if (cycle) await this.finalizeCycleObject(cycle);
   }
 
   private async finalizeCycleObject(cycle: ReplyCycle): Promise<void> {
+    await this.retireCycle(cycle, renderReply(this.activeSessionMessages(cycle.chatKey)).text || "✅ done");
+  }
+
+  /** Retire a cycle: write the final text, close the updater, unsubscribe. */
+  private async retireCycle(cycle: ReplyCycle, text: string): Promise<void> {
+    if (cycle.closed) return;
+    cycle.closed = true;
     if (cycle.finalizeTimer !== null) {
       clearTimeout(cycle.finalizeTimer);
       cycle.finalizeTimer = null;
     }
-    this.cycles.delete(cycle.chatKey);
-    cycle.updater.update(renderReply(this.activeSessionMessages(cycle.chatKey)).text || "✅ done");
-    try {
-      await cycle.updater.finalize();
-    } catch (error) {
-      this.onError(error);
-    } finally {
-      cycle.unsubscribe();
+    if (this.cycles.get(cycle.chatKey) === cycle) this.cycles.delete(cycle.chatKey);
+    cycle.pendingText = text;
+    const updater = cycle.updater;
+    if (updater) {
+      updater.update(text);
+      try {
+        await updater.finalize();
+      } catch (error) {
+        this.onError(error);
+      }
     }
+    cycle.unsubscribe();
   }
 
   private teardownCycle(cycle: ReplyCycle): void {

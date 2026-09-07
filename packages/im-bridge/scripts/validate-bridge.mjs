@@ -337,7 +337,7 @@ async function testNoPrematureFinalizeOnStatusFlicker() {
   const session = [...host.sessions.values()][0];
   await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
 
-  for (const status of ["thinking", "responding", "running", "thinking", "awaiting_user", "running"]) {
+  for (const status of ["idle", "thinking", "responding", "running", "idle", "awaiting_user", "running"]) {
     session.state.status = status;
     session.emit("state", { status });
   }
@@ -367,7 +367,7 @@ async function testNoPrematureFinalizeOnStatusFlicker() {
     !adapter.edits.slice(editsAfterFinalize).some((entry) => entry.text.includes("LATE")),
     "updater closed and unsubscribed after finalize"
   );
-  console.log("✓ status flicker (thinking/responding/awaiting_user) does not finalize; completed does");
+  console.log("✓ status flicker (idle reconcile/thinking/responding/awaiting_user) does not finalize; completed does");
 }
 
 /**
