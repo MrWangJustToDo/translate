@@ -1,12 +1,28 @@
 /**
  * Compaction summary markers and detectors (shared; no cut-point imports).
+ *
+ * ⚠️ These markers are how the compaction chain recognizes its own checkpoints:
+ * `isCompactionSummaryText` matches ANY user message whose text starts with
+ * `[CONVERSATION SUMMARY]`, and `findOuterEndIndex` treats a solo-line
+ * `[END SUMMARY]` as the closing boundary. A *user* message that forges these
+ * markers would be misread as a compaction checkpoint, which can:
+ *   - make `isLatestDurableMessageCompactionSummary` skip auto-compact
+ *     (the session silently stops compacting), and/or
+ *   - make `cut-point` / `extractCompactionSummaryBody` swallow or truncate
+ *     the message body at a forged `[END SUMMARY]` line.
+ *
+ * Therefore every user-text entry point MUST run
+ * {@link assertNotCompactionSummaryInput} before the message lands on the
+ * channel. The only legitimate producers of these markers are compaction
+ * itself (`createCompactionSummaryUIMessage`) and the model inside a
+ * compaction run (formatted by {@link formatCompactionSummaryContent}).
  */
 
 import { isContextUIMessage } from "../turn-context/turn-context-message.js";
 
 import { extractTextFromContent } from "./message-utils.js";
 
-import type { ModelMessage, UIMessage } from "@tanstack/ai";
+import type { ContentPart, ModelMessage, UIMessage } from "@tanstack/ai";
 
 export const CONVERSATION_SUMMARY_START = "[CONVERSATION SUMMARY]";
 export const CONVERSATION_SUMMARY_END = "[END SUMMARY]";
@@ -14,6 +30,38 @@ export const CONVERSATION_SUMMARY_END = "[END SUMMARY]";
 export function isCompactionSummaryText(text: string | undefined | null): boolean {
   if (!text) return false;
   return text.trimStart().startsWith(CONVERSATION_SUMMARY_START);
+}
+
+function extractFirstText(content: string | readonly ContentPart[]): string | undefined {
+  if (typeof content === "string") return content;
+  for (const part of content) {
+    if (part.type !== "text") continue;
+    const value = (part as { content?: unknown; text?: unknown }).content ?? (part as { text?: unknown }).text;
+    return typeof value === "string" ? value : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Reject user-authored text that forges the compaction summary markers.
+ *
+ * Compaction checkpoints are detected purely by marker matching (see the
+ * header note), so any message whose first text starts with
+ * `[CONVERSATION SUMMARY]` would be treated as a compaction checkpoint and
+ * break auto-compact / cut-point detection. Call this at every user-message
+ * entry point (send / follow-up / force-submit) before the message reaches
+ * the channel.
+ *
+ * @throws if the input begins with {@link CONVERSATION_SUMMARY_START}
+ */
+export function assertNotCompactionSummaryInput(content: string | readonly ContentPart[]): void {
+  const text = extractFirstText(content);
+  if (text !== undefined && isCompactionSummaryText(text)) {
+    throw new Error(
+      `Input starts with the reserved compaction marker "${CONVERSATION_SUMMARY_START}" and ` +
+        "would be misread as a compaction summary checkpoint. Please reword the message."
+    );
+  }
 }
 
 export function isCompactionSummaryModelMessage(message: ModelMessage): boolean {

@@ -148,6 +148,11 @@ export async function hydrateUIMessages(messages: UIMessage[]): Promise<UIMessag
     // JSON persistence turns the Date-typed `createdAt` into an ISO string;
     // TanStack's wire conversion calls `createdAt.toISOString()` and would
     // crash on the string form.
+    //
+    // NOTE (upstream fixed): @tanstack/ai >= 0.53.0 `coerceCreatedAt`
+    // (activities/chat/messages.js) accepts string timestamps, so new engine
+    // output survives wire conversion without this revive. Kept to normalize
+    // legacy persisted sessions that still store ISO strings.
     if (typeof message.createdAt === "string") {
       const revived = new Date(message.createdAt);
       if (!Number.isNaN(revived.getTime())) message.createdAt = revived;

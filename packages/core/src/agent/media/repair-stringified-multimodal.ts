@@ -7,6 +7,15 @@
  *
  * Vision capability is irrelevant: the same UIMessage shape must survive
  * interrupt snapshots whether or not the model accepts images on the wire.
+ *
+ * NOTE (upstream fixed): @tanstack/ai >= 0.53.0 no longer produces this
+ * corruption — `uiMessagesToWire` routes user parts through `collectUserContent`
+ * (utilities/ag-ui-wire.js), emitting multimodal parts as a structured array
+ * instead of JSON.stringify. We keep this repair for legacy sessions: old
+ * persisted history can still carry stringified ContentPart[] (see
+ * dehydrateUIMessages / hydrateUIMessages in media-utils.ts), and the
+ * passthrough cost is zero for healthy snapshots. Safe to drop once all
+ * legacy session stores are migrated.
  */
 
 import type { StreamChunk, UIMessage } from "@tanstack/ai";

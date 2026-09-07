@@ -286,6 +286,9 @@ export class AgentUIChannel {
     if (shouldSuppressMessagesSnapshot(chunk)) {
       return;
     }
+    // Upstream >= 0.53.0 fixed the stringified-ContentPart snapshot corruption
+    // (collectUserContent in ag-ui-wire.js); keep the repair as a defensive
+    // passthrough for legacy snapshots if suppression is ever relaxed.
     const normalized = normalizeToolCallName(repairMessagesSnapshotChunk(chunk));
     if (shouldSuppressReplayedToolChunk(this.getMessages(), normalized)) {
       return;

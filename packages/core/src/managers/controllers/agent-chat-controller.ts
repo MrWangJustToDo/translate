@@ -1,4 +1,5 @@
 import { findToolCallIdForApproval } from "../../agent/approval/tool-approval-table.js";
+import { assertNotCompactionSummaryInput } from "../../agent/compaction";
 import { shouldDeferMidRunQueue } from "../../agent/queue/defer-mid-run-queue.js";
 import { PendingMessageQueue, type QueueMode } from "../../agent/queue/pending-message-queue.js";
 import { runAgentOnce } from "../../agent/run/run-agent-skeleton.js";
@@ -192,6 +193,9 @@ export class AgentChatController {
    * starts a new LLM turn.
    */
   followUp(content: QueuedMessageContent): void {
+    // Reject forged compaction markers before they can be queued or land on
+    // the channel (marker matching drives compaction checkpoint detection).
+    assertNotCompactionSummaryInput(content);
     if (!this.shouldDeferQueue()) {
       void this.sendMessage(content);
       return;
@@ -207,6 +211,7 @@ export class AgentChatController {
    * This is the Option/Ctrl+Enter keybinding while the agent is running.
    */
   forceSubmit(content: string | ContentPart[]): void {
+    assertNotCompactionSummaryInput(content);
     this.interruptCurrentRun("force-submit");
     this.channel.addUserMessage(content);
     this.persistMessages("user-message");
@@ -215,6 +220,9 @@ export class AgentChatController {
   }
 
   sendMessage(content: string | ContentPart[]): Promise<void> {
+    // User-authored text must not forge compaction checkpoint markers (see
+    // assertNotCompactionSummaryInput in agent/compaction).
+    assertNotCompactionSummaryInput(content);
     if (this.shouldDeferQueue()) {
       this.steer(content);
       return Promise.resolve();

@@ -71,6 +71,7 @@ export {
   type GetModelVisibleMessagesOptions,
 } from "./message-chain-projection.js";
 export { extractCompactionSummaryBody } from "./compaction-summary.js";
+export { assertNotCompactionSummaryInput } from "./compaction-summary.js";
 
 // Wire projection cache (onConfig reuse)
 export {
