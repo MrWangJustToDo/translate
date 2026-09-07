@@ -196,9 +196,6 @@ importers:
       '@tanstack/ai-anthropic':
         specifier: ^0.18.5
         version: 0.18.5(@tanstack/ai@0.53.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(zod@4.5.4)
-      '@tanstack/ai-client':
-        specifier: ^0.31.0
-        version: 0.31.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@tanstack/ai-code-mode':
         specifier: ^0.4.8
         version: 0.4.8(@tanstack/ai@0.53.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(zod@4.5.4)
@@ -2059,9 +2056,6 @@ packages:
     peerDependenciesMeta:
       '@anthropic-ai/vertex-sdk':
         optional: true
-
-  '@tanstack/ai-client@0.31.0':
-    resolution: {integrity: sha512-K7VlIfyiPXpTkdVkfoGbful++/jr9wJet4ri0uhBvfxgIUi4FNM+50TadfcZ14H+L4mDdnVB4IaRYy+XGxV9aw==}
 
   '@tanstack/ai-code-mode@0.4.8':
     resolution: {integrity: sha512-8cGWuxCgf5wLDD0waXnc8xchqRuDwnWRiz13lMkX1oZPx1Eh+C0v8p2NeWS4KQh/rj0kDuh+vLsNc/Q//YARvg==}
@@ -7542,15 +7536,6 @@ snapshots:
       '@tanstack/ai': 0.53.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@tanstack/ai-utils': 0.4.0
     transitivePeerDependencies:
-      - zod
-
-  '@tanstack/ai-client@0.31.0(@opentelemetry/api@1.9.1)(zod@4.5.4)':
-    dependencies:
-      '@tanstack/ai': 0.53.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@tanstack/ai-event-client': 0.11.2
-      '@tanstack/ai-utils': 0.4.0
-    transitivePeerDependencies:
-      - '@opentelemetry/api'
       - zod
 
   '@tanstack/ai-code-mode@0.4.8(@tanstack/ai@0.53.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(zod@4.5.4)':
