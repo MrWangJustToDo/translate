@@ -28,6 +28,8 @@ export interface AutocompleteSuggestion {
   optionValue?: string;
   /** Freeform option — execute with typed args */
   freeform?: boolean;
+  /** Divider row — rendered as a rule line, skipped by selection */
+  separator?: boolean;
 }
 
 export interface AutocompleteState {
@@ -75,6 +77,7 @@ function optionToSuggestion(opt: CommandOption, command: Command): AutocompleteS
     description: opt.description || "",
     optionValue: opt.value,
     freeform: opt.freeform === true,
+    separator: opt.separator === true,
   };
 }
 
@@ -87,14 +90,15 @@ function normalizeOptions(command: Command, options: CommandOption[]): CommandOp
 }
 
 function filterOptions(options: CommandOption[], optionPrefix: string): CommandOption[] {
-  const freeform = options.filter((o) => o.freeform);
-  const presets = options.filter((o) => !o.freeform);
-  const filtered = optionPrefix
-    ? presets.filter(
-        (o) => o.label.toLowerCase().includes(optionPrefix) || o.value.toLowerCase().includes(optionPrefix)
-      )
-    : presets;
-  return [...filtered, ...freeform];
+  const filtered = options.filter((o) => {
+    if (o.separator) return !optionPrefix; // drop dividers while filtering
+    if (o.freeform) return true;
+    if (!optionPrefix) return true;
+    return o.label.toLowerCase().includes(optionPrefix) || o.value.toLowerCase().includes(optionPrefix);
+  });
+  const presets = filtered.filter((o) => !o.freeform);
+  const freeform = filtered.filter((o) => o.freeform);
+  return [...presets, ...freeform];
 }
 
 function applyOptionsToState(
@@ -178,19 +182,27 @@ export const useAutocomplete = createState(() => ({ ...initialState }), {
     },
 
     /**
-     * Select next suggestion
+     * Select next suggestion (skips separator rows)
      */
     selectNext: () => {
       if (!state.visible || state.suggestions.length === 0) return;
-      state.selectedIndex = (state.selectedIndex + 1) % state.suggestions.length;
+      let next = (state.selectedIndex + 1) % state.suggestions.length;
+      while (state.suggestions[next]?.separator && next !== state.selectedIndex) {
+        next = (next + 1) % state.suggestions.length;
+      }
+      state.selectedIndex = next;
     },
 
     /**
-     * Select previous suggestion
+     * Select previous suggestion (skips separator rows)
      */
     selectPrev: () => {
       if (!state.visible || state.suggestions.length === 0) return;
-      state.selectedIndex = (state.selectedIndex - 1 + state.suggestions.length) % state.suggestions.length;
+      let prev = (state.selectedIndex - 1 + state.suggestions.length) % state.suggestions.length;
+      while (state.suggestions[prev]?.separator && prev !== state.selectedIndex) {
+        prev = (prev - 1 + state.suggestions.length) % state.suggestions.length;
+      }
+      state.selectedIndex = prev;
     },
 
     /**
@@ -201,6 +213,8 @@ export const useAutocomplete = createState(() => ({ ...initialState }), {
       if (!state.visible || state.suggestions.length === 0) return null;
       const selected = state.suggestions[state.selectedIndex];
       if (!selected) return null;
+      // Defensive: separators are skipped by selection; ignore if somehow selected
+      if (selected.separator) return null;
 
       if (state.mode === "options") {
         const command = state.currentCommand;

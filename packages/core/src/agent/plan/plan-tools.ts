@@ -42,7 +42,7 @@ export function getPlanModeToolBlockReason(
   if (!planMode?.isRestrictingTools()) return null;
 
   if (isPlanModeForbiddenTool(toolName)) {
-    return `Plan mode: "${toolName}" is blocked while planning. Use /plan execute after the plan is ready.`;
+    return `Plan mode: "${toolName}" is blocked while planning. Use /mode execute after the plan is ready.`;
   }
 
   if (toolName === "run_command") {

@@ -27,6 +27,11 @@ export interface CommandOption {
   description?: string;
   freeform?: boolean;
   defaultSelected?: boolean;
+  /**
+   * Visual divider in the option menu — not selectable, not matched while
+   * filtering. Label/value are ignored; AutocompleteList renders a rule line.
+   */
+  separator?: boolean;
 }
 
 export interface Command {

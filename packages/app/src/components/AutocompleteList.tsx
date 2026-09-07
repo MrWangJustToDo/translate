@@ -30,6 +30,13 @@ export const AutocompleteList = () => {
   if (!visible || suggestions.length === 0) return null;
 
   const renderItem = (suggestion: AutocompleteSuggestion, index: number) => {
+    if (suggestion.separator) {
+      return (
+        <Text color={COLORS.muted} dimColor wrap="truncate">
+          {"─".repeat(36)}
+        </Text>
+      );
+    }
     const isSelected = index === selectedIndex;
     const label = suggestion.label.padEnd(maxLabelWidth + 2);
     const labelColor = suggestion.freeform ? COLORS.muted : COLORS.primary;

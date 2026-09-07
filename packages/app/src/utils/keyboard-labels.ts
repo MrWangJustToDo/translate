@@ -183,7 +183,7 @@ export function formatKeyboardShortcutsHelp(): string {
     }
     lines.push("");
   }
-  lines.push(`Tip: /theme, /display, /auto, /plan, /resume open option menus after Tab/Enter.`);
+  lines.push(`Tip: /theme, /display, /mode, /resume open option menus after Tab/Enter.`);
   return lines.join("\n").trimEnd();
 }
 

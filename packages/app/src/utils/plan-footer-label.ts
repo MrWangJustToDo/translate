@@ -17,7 +17,7 @@ export function formatPlanModeFooterLabel(
     case "planning":
       return "planning";
     case "ready":
-      return "review · /plan execute";
+      return "review · /mode execute";
     case "executing": {
       if (progress && progress.total > 0) {
         return `building ${progress.completed}/${progress.total}`;

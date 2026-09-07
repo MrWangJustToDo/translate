@@ -59,7 +59,7 @@ export function buildPlanModeExecutingPrompt(planMarkdown: string | null, planFi
   return parts.join("\n");
 }
 
-/** Short user steer when `/plan execute` starts a run. */
+/** Short user steer when `/mode execute` starts a run. */
 export function buildPlanExecuteSteerMessage(planMarkdown: string | null, planFilePath?: string | null): string {
   const header = [
     "Build the approved plan step-by-step (you are now in building phase). Start by reading the plan's Key files. Update todos as you go — Verification is seeded as a single `[verify]` todo; run all its checks and mark it when they pass. Do not expand scope without asking. In retro, report Verification pass/fail with evidence before finishing.",
@@ -77,7 +77,7 @@ export function buildPlanExecuteSteerMessage(planMarkdown: string | null, planFi
 export function buildPlanModeReadyPrompt(planMarkdown: string | null, planFilePath?: string | null): string {
   const parts = [
     '<plan_mode phase="ready">',
-    "A plan is ready for **review** (still read-only). Stay read-only until the user runs `/plan execute` (Build).",
+    "A plan is ready for **review** (still read-only). Stay read-only until the user runs `/mode execute` (Build).",
     "Revise with `update_plan` (preferred) or a new `## Plan` section if the user asks — updates overwrite the plan file.",
     "Prefer `task` for any further read-only research before revising.",
     "Do not replace the plan with a vague chat overview — the plan file and ready-banner preview are the source of truth.",
@@ -100,7 +100,7 @@ export function buildPlanModeRetroPrompt(planMarkdown: string | null, planFilePa
     "Review outcomes against the approved plan: what was done, any deviations, and **Verification**.",
     "For each Verification checklist item, record pass/fail with concrete evidence (command, validate script, or observed behavior).",
     "Call `complete_plan` with `verificationResults` covering every checklist item (all passed). Do not call it if any item failed — fix or update the plan first.",
-    "The user may force-exit with `/plan done` without the agent gate.",
+    "The user may force-exit with `/mode done` without the agent gate.",
   ];
   if (planFilePath?.trim()) {
     parts.push(`Plan file: \`${planFilePath.trim()}\` — prefer reading it if you need the full text.`);
@@ -115,7 +115,7 @@ export function buildPlanModeRetroPrompt(planMarkdown: string | null, planFilePa
 /** Steer message when entering retro (optional chat injection). */
 export function buildPlanRetroSteerMessage(planFilePath?: string | null): string {
   const pathLine = planFilePath?.trim() ? ` Plan file: \`${planFilePath.trim()}\`.` : "";
-  return `All plan steps are done. Report Verification pass/fail with evidence, then call \`complete_plan\` with verificationResults (or the user may run \`/plan done\`).${pathLine}`;
+  return `All plan steps are done. Report Verification pass/fail with evidence, then call \`complete_plan\` with verificationResults (or the user may run \`/mode done\`).${pathLine}`;
 }
 
 export function buildPlanModePrompt(

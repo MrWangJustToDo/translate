@@ -63,7 +63,7 @@ export const PlanReadyBanner = () => {
           {preserved}
         </Text>
         <Text color={COLORS.muted} dimColor>
-          {KeyLabel.ctrlP} review plan · /plan save · revise in chat · /plan to exit
+          {KeyLabel.ctrlP} review plan · /mode save · revise in chat · /mode off to exit
           {previewOpen ? ` · ${KeyLabel.enter} build · ${KeyLabel.esc} close preview` : ""}
         </Text>
       </Box>

@@ -128,7 +128,7 @@ const completePlanOutputSchema = z.object({
 export const createCompletePlanTool = (deps: CreatePlanToolDeps) => {
   return defineServerTool({
     name: "complete_plan",
-    description: `End the current plan lifecycle after the retrospective. Only use in retro phase when every Verification checklist item has a pass/fail result with evidence. Exits plan mode. (Users may still force-exit with /plan done.)`,
+    description: `End the current plan lifecycle after the retrospective. Only use in retro phase when every Verification checklist item has a pass/fail result with evidence. Exits plan mode. (Users may still force-exit with /mode done.)`,
     inputSchema: z.object({
       note: z.string().optional().describe("Optional one-line note about the retrospective outcome"),
       verificationResults: z

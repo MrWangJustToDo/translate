@@ -11,7 +11,7 @@ export function buildAutoModePrompt(): string {
     "- Prefer careful, reversible edits; avoid destructive commands unless clearly required.",
     "- Use todos for multi-step work; verify important changes before claiming done.",
     "- Use `ask_user` when requirements are ambiguous or a high-impact choice needs a preference.",
-    "- For large or unclear multi-file work, suggest the user switch to plan mode (/plan or Shift+Tab) before mutating broadly — you cannot enter plan mode yourself.",
+    "- For large or unclear multi-file work, suggest the user switch to plan mode (/mode or Shift+Tab) before mutating broadly — you cannot enter plan mode yourself.",
     "</auto_mode>",
   ].join("\n");
 }

@@ -21,7 +21,7 @@ const ROTATING_HINTS: readonly string[] = [
   `${KeyLabel.slash} opens all commands`,
   "/help lists commands · /shortcuts lists keys",
   "/resume continues your last session",
-  "/plan explores before building",
+  "/mode switches plan / auto / normal",
   `${KeyLabel.ctrlE} workspace · ${KeyLabel.ctrlT} tasks · ${KeyLabel.ctrlY} extensions`,
   `${KeyLabel.shiftTab} cycles Normal → Auto → Plan mode`,
   `${KeyLabel.esc} aborts the current run`,
