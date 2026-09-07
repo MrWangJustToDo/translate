@@ -185,15 +185,25 @@ export class SessionService {
       this.data.uiMessages = dehydrated;
     }
 
-    if (this.data.name === "New Session") {
+    // Regenerate the title for blank names too, not just "New Session": legacy
+    // sessions whose name was overwritten to "" before the empty-title guard
+    // would otherwise never retitle again (name !== "New Session").
+    if (!this.data.name || this.data.name === "New Session") {
       const firstUserText = getFirstUserInput(uiMessages || []);
       this.generateSessionTitle(firstUserText, { usage, resolveTextAdapter }).then((title) => {
         if (this.data) {
-          // Skip empty/whitespace titles (e.g. a no-uiMessages persist passes an
-          // empty first user text) so the name stays "New Session" and a later
-          // persist with real messages can regenerate it.
           const trimmed = title.trim();
-          if (!trimmed) return;
+          if (!trimmed) {
+            // Skip empty/whitespace titles (e.g. a no-uiMessages persist passes an
+            // empty first user text). Keep "New Session" — and repair legacy blank
+            // names so the UI never shows an empty label — until a persist with
+            // real messages regenerates the title.
+            if (!this.data.name || !this.data.name.trim()) {
+              this.data.name = "New Session";
+              void this.saveToStore(emitEvent, "session-title");
+            }
+            return;
+          }
           this.data.name = trimmed;
           // Reuse the unified save path so a title-write failure also emits
           // `session:save-error` (target "session-title").
@@ -254,6 +264,13 @@ export class SessionService {
       } else {
         todoManager.reset();
       }
+    }
+
+    // Repair legacy sessions whose name was overwritten to a blank string before
+    // the empty-title guard existed. Reset to the default so the UI never shows
+    // an empty label and the next persist retitles via auto-title.
+    if (!session.name?.trim()) {
+      session.name = "New Session";
     }
 
     this.setSessionData(session);
