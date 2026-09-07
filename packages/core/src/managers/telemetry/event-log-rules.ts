@@ -272,7 +272,7 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
   "plan:ready": {
     level: "info",
     category: "agent",
-    formatMessage: (event) => `Plan ready (${p(event).stepCount ?? "?"} steps) — /plan execute to run`,
+    formatMessage: (event) => `Plan ready (${p(event).stepCount ?? "?"} steps) — /mode execute to run`,
   },
   "plan:execute": {
     level: "info",
@@ -296,7 +296,7 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
   "plan:retro": {
     level: "info",
     category: "agent",
-    formatMessage: () => "Plan retrospective — review against the plan, then complete_plan or /plan done",
+    formatMessage: () => "Plan retrospective — review against the plan, then complete_plan or /mode done",
   },
   "plan:complete": {
     level: "info",

@@ -56,7 +56,7 @@ pnpm --filter @my-agent/app test
 With `pnpm start:cli` in a real workspace:
 
 1. Chat: send a message, confirm streaming reply
-2. `/plan` → plan mode footer; write/save plan; `/plan execute` if ready
+2. `/mode plan` → plan mode footer; write/save plan; `/mode execute` if ready
 3. `/compact` after enough context
 4. Spawn a `task` subagent → `Ctrl+T` panel lists child + preview
 5. Start with resume picker (`--resume` / picker mode) → list via Session, resume one session

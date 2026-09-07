@@ -37,8 +37,8 @@ A **runtime-agnostic** AI coding agent — same core logic, runs in terminal, Ch
 | **Session Persistence** | Save/resume conversations under `.agents/sessions/` with auto-save |
 | **Multiple Live Sessions** | Several live agent sessions can coexist and be switched on the fly (`Ctrl+X`) without losing state; core dedups disk-session ownership (a bound session can't be resumed twice) and the header shows the active session count |
 | **Memory** | Automatic cross-session knowledge extraction under `.agents/memory/` |
-| **Modes** | `Shift+Tab` cycles Normal → Auto (skip approvals) → Plan; `/plan` and `/auto` for explicit control |
-| **Plan Mode** | Explore → review → Build → forced retro (`/plan`, persisted under `.agents/plans/`) |
+| **Modes** | `Shift+Tab` cycles Normal → Auto (skip approvals) → Plan; `/mode` for explicit control (`plan` / `auto` / `off`) |
+| **Plan Mode** | Explore → review → Build → forced retro (`/mode plan`, persisted under `.agents/plans/`) |
 | **Background commands** | `run_command(run_in_background)` plus `get_command_output` / `kill_command` |
 | **Telemetry** | Lifecycle telemetry bus (bridged to agent log); hosts subscribe via AgentSession `lifecycle` |
 | **Extensions** | Capability model like [Pi](https://pi.dev) — declarative extension modules (tools / commands / hooks); built-ins (LSP, Memory, Skills, MCP) + third-party modules under `.agents/extension` (`Ctrl+Y` panel). See [Extensions](#extensions) |
@@ -184,7 +184,7 @@ Default and alternate theme on the idle screen. Header shortcuts: `/` commands, 
 
 ### Slash Commands
 
-Type `/` to open the command palette with autocomplete (`/help`, `/plan`, `/auto`, `/compact`, `/resume`, `/usage`, …).
+Type `/` to open the command palette with autocomplete (`/help`, `/mode`, `/compact`, `/resume`, `/usage`, …).
 
 ![Slash commands](command.png)
 
@@ -228,7 +228,7 @@ Press `Ctrl+T` to open the task panel and inspect live subagent runs and complet
 
 ### Plan Mode
 
-Plan Mode (`/plan`, `Shift+Tab`) — explore → review → Build → forced retro. Preview plans before execution and track progress with the todo list.
+Plan Mode (`/mode plan`, `Shift+Tab`) — explore → review → Build → forced retro. Preview plans before execution and track progress with the todo list.
 
 ![Plan — review mode](plan-mode.png)
 ![Plan — building](plan-build.png)
@@ -428,7 +428,7 @@ The CLI has **4 input modes** — shortcuts adapt to the current mode:
 | `Ctrl+V` | Paste image | — | — | — |
 | `Ctrl+C` | Exit | Exit | Exit | Exit |
 
-Slash commands: `/help`, `/shortcuts`, `/compact`, `/plan`, `/auto`, `/clear`, `/rename`, `/resume`, `/mcp`, `/usage`, `/display`, `/theme`, `/effort`, `/quit` — plus extension commands: `/skill [name]`, `/memory [name]`, `/lsp`, `/lsp-restart`, `/lsp-config`
+Slash commands: `/help`, `/shortcuts`, `/mode`, `/compact`, `/clear`, `/rename`, `/resume`, `/mcp`, `/usage`, `/display`, `/theme`, `/effort`, `/quit` — plus extension commands: `/skill [name]`, `/memory [name]`, `/lsp`, `/lsp-restart`, `/lsp-config`
 
 ---
 

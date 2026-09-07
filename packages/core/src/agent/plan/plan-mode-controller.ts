@@ -365,7 +365,7 @@ export class PlanModeController {
 
   /**
    * Load markdown into plan state (enables planning first if off).
-   * Used by `/plan load`. Sets {@link planFilePath} when `relativePath` is provided.
+   * Used by `/mode load`. Sets {@link planFilePath} when `relativePath` is provided.
    */
   async loadPlanMarkdown(markdown: string, options?: { relativePath?: string }): Promise<ApplyPlanResult> {
     if (this.phase === "off") {
@@ -386,7 +386,7 @@ export class PlanModeController {
     });
   }
 
-  /** Record path after explicit `/plan save` (may rename). */
+  /** Record path after explicit `/mode save` (may rename). */
   setPlanFilePath(path: string): void {
     this.planFilePath = path;
   }

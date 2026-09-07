@@ -21,7 +21,7 @@ For monorepo-wide context see [AGENTS.md](../../AGENTS.md). For public exports s
 | Memory (prefetch / extract / consolidate) | **Done**         | Post-run extraction; in-flight extracts coalesce to latest (`queued`)                                                   |
 | Tool approval                             | **Done in core** | `status` middleware + `needsApproval` on tools; app handles UI/keyboard only                                            |
 | Extensions                                | **Done**         | `ExtensionRunner` + `extensions-middleware` + per-turn `before_agent_start` / turn-context providers                    |
-| Plan mode                                 | **Done**         | `PlanModeController` + tool filter + `/plan`; session `planMode` restore; executing auto-approve gated on `todosSeeded` |
+| Plan mode                                 | **Done**         | `PlanModeController` + tool filter + `/mode plan`; session `planMode` restore; executing auto-approve gated on `todosSeeded` |
 
 **Known gaps**
 
@@ -812,7 +812,7 @@ executeManagedAgentRun
 
 Domain-owned tools live next to their domain (same pattern as `subagent/begin-summary-tool` and `subagent/task-tool`). Universal workspace tools stay under `agent/tools/`.
 
-**Verification contract:** `create_plan` / `update_plan` require a non-empty `verification` checklist (content quality is prompt guidance, not a hardcoded command blacklist). Plan markdown gets a `**Verification:**` section. In retro, `complete_plan` requires `verificationResults: { item, passed, evidence }[]` covering every parsed checklist item (all `passed: true`). Legacy plans with no Verification section accept a single passing smoke/N/A result. User `/plan done` bypasses the agent gate. Helpers: `parseVerificationItemsFrom*`, `gateCompletePlanVerification`. Validate: `pnpm --filter @my-agent/core run validate:plan-verification`.
+**Verification contract:** `create_plan` / `update_plan` require a non-empty `verification` checklist (content quality is prompt guidance, not a hardcoded command blacklist). Plan markdown gets a `**Verification:**` section. In retro, `complete_plan` requires `verificationResults: { item, passed, evidence }[]` covering every parsed checklist item (all `passed: true`). Legacy plans with no Verification section accept a single passing smoke/N/A result. User `/mode done` bypasses the agent gate. Helpers: `parseVerificationItemsFrom*`, `gateCompletePlanVerification`. Validate: `pnpm --filter @my-agent/core run validate:plan-verification`.
 
 ---
 

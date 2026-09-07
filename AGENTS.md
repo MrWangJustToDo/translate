@@ -534,18 +534,18 @@ Cursor-like lifecycle: explore → review → Build → forced retro → complet
 | Phase (internal) | UI label | Tools | Behavior |
 |------------------|----------|-------|----------|
 | `planning` | planning | Mutate tools + MCP hidden; `task` allowed; `create_plan` / `update_plan` offered; `run_command` allowlisted | Explore (prefer `task`), clarify if needed, call `create_plan` (or `## Plan` fallback). **verification** required (non-empty outcome checklist). Judge `task` via status flags (`reachedLimit` / `incomplete` / `aborted` / `truncated`) before treating research as extendable. Auto-saves under `.agents/plans/`. |
-| `ready` | review | Same read-only restrictions | User reviews; revise via chat + `update_plan` (verification still required). `/plan execute` = Build (no extra confirm). |
+| `ready` | review | Same read-only restrictions | User reviews; revise via chat + `update_plan` (verification still required). `/mode execute` = Build (no extra confirm). |
 | `executing` | building | Full tools (`create_plan` / `update_plan` / `complete_plan` hidden); pending approvals auto-approved while seeded | Follow plan; run Verification with evidence before finishing. Session persists `planMode` + `todoPlanBound`. |
-| `retro` | retro | Full tools + `complete_plan` | Forced retrospective; `complete_plan` requires `verificationResults` covering every checklist item (all passed). `/plan done` force-exits without that gate. |
+| `retro` | retro | Full tools + `complete_plan` | Forced retrospective; `complete_plan` requires `verificationResults` covering every checklist item (all passed). `/mode done` force-exits without that gate. |
 | `off` | — | Plan authoring/completion tools hidden | Default |
 
-**App:** `Shift+Tab` cycles modes (normal → auto → plan → normal → …). `/plan` and `/auto` are the slash-command entry points (there is no `/mode` command). When **review** (`ready`), press `p` (empty input) to toggle a bordered markdown plan preview in the banner (`Esc` closes). `/plan execute` Builds from review; `/plan cancel` pauses building → review; `/plan done` finishes retro (user force — no agent verification gate); `/plan status` reports phase; `/plan save` / `load` / `list` for named persistence (create/update already auto-save). Footer shows mode name (`Normal` / `Auto` / `planning` / `review · /plan execute` / `building n/m` / `retro`). `create_plan` / `update_plan` do not dump plan text into the tool transcript — review is via the banner preview.
+**App:** `Shift+Tab` cycles modes (normal → auto → plan → normal → …); `/mode` is the slash-command entry point (contextual menu + subcommands `plan` / `auto` / `off` / `switch plan` / `switch auto` / `status` / `execute` / `done` / `cancel` / `save` / `load` / `list`; empty `/mode` cycles like `Shift+Tab`). When **review** (`ready`), press `p` (empty input) to toggle a bordered markdown plan preview in the banner (`Esc` closes). `/mode execute` Builds from review; `/mode cancel` pauses building → review; `/mode done` finishes retro (user force — no agent verification gate); `/mode status` reports phase; `/mode save` / `load` / `list` for named persistence (create/update already auto-save). Footer shows mode name (`Normal` / `Auto` / `planning` / `review · /mode execute` / `building n/m` / `retro`). `create_plan` / `update_plan` do not dump plan text into the tool transcript — review is via the banner preview.
 
 **Core:** `ManagedAgent.planMode` (`PlanModeController`), tool filter in `run-agent`, `createPlanModeMiddleware`, prompts via turn context, `plan-verification` parse/gate helpers. See `packages/core/src/agent/plan/`. Validate: `pnpm --filter @my-agent/core run validate:plan-verification`.
 
-**Auto mode:** `/auto on` (or `/auto` to toggle) skips all tool approvals. Footer shows `Auto`. Mutually exclusive with plan mode (entering one clears the other). Cleared on `/clear` / reset; persisted as `SessionData.autoMode` (legacy sessions may still have `autoApprove`). While auto is on, turn context includes an `<auto_mode>` block.
+**Auto mode:** `/mode auto` skips all tool approvals. Footer shows `Auto`. Mutually exclusive with plan mode (entering one clears the other). Cleared on `/clear` / reset; persisted as `SessionData.autoMode` (legacy sessions may still have `autoApprove`). While auto is on, turn context includes an `<auto_mode>` block.
 
-**Session / safety:** `/clear` and `ManagedAgent.reset()` always `planMode.disable()`, turn off auto mode, and clear the session `approvals` table. Resume restores `planMode` + `autoMode` with plan winning if both were somehow set, and restores `approvals` (or backfills from UIMessage parts when the field is missing). Chat `onConfig` rebuilds TanStack `resumeToolState.approvals` from that table so approved/denied tools do not re-prompt. Plan building auto-approve still requires `executing` **and** `todosSeeded` (separate from `/auto`).
+**Session / safety:** `/clear` and `ManagedAgent.reset()` always `planMode.disable()`, turn off auto mode, and clear the session `approvals` table. Resume restores `planMode` + `autoMode` with plan winning if both were somehow set, and restores `approvals` (or backfills from UIMessage parts when the field is missing). Chat `onConfig` rebuilds TanStack `resumeToolState.approvals` from that table so approved/denied tools do not re-prompt. Plan building auto-approve still requires `executing` **and** `todosSeeded` (separate from `/mode auto`).
 
 ## Subagent System
 
@@ -895,7 +895,7 @@ packages/
 │   │   ├── types.ts                   # AgentAdapter, AppConfig, InitResult interfaces
 │   │   └── create-agent.ts            # Shared createAgentFromConfig() helper
 │   ├── app/                           # Main app components (App.tsx, Agent.tsx)
-│   ├── commands/                      # Slash commands (/help, /shortcuts, /plan, /compact, /display, /theme, /clear, etc.)
+│   ├── commands/                      # Slash commands (/help, /shortcuts, /mode, /compact, /display, /theme, /clear, etc.)
 │   ├── components/                    # React components (UserInput, EditDiff, Help, etc.)
 │   ├── context/                       # React contexts (AdapterProvider)
 │   ├── hooks/                         # Shared hooks (useAgentChat, useConfig, useAgent, etc.)

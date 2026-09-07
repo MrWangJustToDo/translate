@@ -36,7 +36,7 @@ export async function buildDefaultSystemPrompt(platform?: string): Promise<strin
 - Unknown URL or up-to-date facts → websearch, then webfetch promising links
 - Change existing files → edit_file; write_file only for new files or intentional full rewrites
 - Multi-step work → todo early; ask_user only when user input is required to proceed
-- Large / ambiguous multi-file changes → ask_user whether to enter plan mode (/plan or Shift+Tab); you cannot enable plan mode yourself
+- Large / ambiguous multi-file changes → ask_user whether to enter plan mode (/mode plan or Shift+Tab); you cannot enable plan mode yourself
 - After compaction, if the summary lists Compact archives under \`.agents/transcripts/\`, grep or read small ranges — do not read whole archive files
 
 **Guidelines**:

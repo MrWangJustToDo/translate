@@ -42,7 +42,7 @@ assert.ok(!/static summary/i.test(planning), "planning prompt should not adverti
 const ready = buildPlanModeReadyPrompt("## Plan\n1. Do thing", ".agents/plans/x.md");
 assert.ok(ready.includes("task"));
 assert.ok(ready.includes("update_plan"));
-assert.ok(ready.includes("/plan execute"));
+assert.ok(ready.includes("/mode execute"));
 assert.ok(/review/i.test(ready));
 
 const md = formatStructuredPlanMarkdown({
