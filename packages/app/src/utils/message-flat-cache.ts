@@ -6,7 +6,7 @@ export type CachedFlatMessage = {
 };
 
 /** Non-reactive flatten cache (must not write createState during render). */
-const MAX_FLAT_MESSAGE_ENTRIES = 500;
+const MAX_FLAT_MESSAGE_ENTRIES = 150;
 const cache = new Map<string, CachedFlatMessage>();
 
 export function getFlatMessage(key: string): CachedFlatMessage | undefined {
