@@ -412,7 +412,7 @@ The CLI has **4 input modes** — shortcuts adapt to the current mode:
 | `Ctrl+V` | Paste image | — | — | — |
 | `Ctrl+C` | Exit | Exit | Exit | Exit |
 
-Slash commands: `/help`, `/shortcuts`, `/compact`, `/plan`, `/auto`, `/clear`, `/rename`, `/resume`, `/mcp`, `/usage`, `/display`, `/theme`, `/effort`, `/paste`, `/quit` — plus extension commands: `/skill [name]`, `/memory [name]`, `/lsp`, `/lsp-restart`, `/lsp-config`
+Slash commands: `/help`, `/shortcuts`, `/compact`, `/plan`, `/auto`, `/clear`, `/rename`, `/resume`, `/mcp`, `/usage`, `/display`, `/theme`, `/effort`, `/quit` — plus extension commands: `/skill [name]`, `/memory [name]`, `/lsp`, `/lsp-restart`, `/lsp-config`
 
 ---
 
