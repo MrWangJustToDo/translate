@@ -14,7 +14,7 @@ import {
   DURATION_THRESHOLD_MS,
   formatDuration,
   formatToolInput,
-  getCompactOutput,
+  // getCompactOutput, // temporarily commented out with the error block below
   getDurationMs,
   getInlineSummary,
   getToolCallColor,
@@ -113,10 +113,10 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
   const inlineSummary = errorText ? null : getInlineSummary(part, toolName);
   const outputFailed = (part.output as { success?: boolean } | undefined)?.success === false;
   // Density compact: skip success one-liners; keep failure hints.
-  const compactOutput =
-    hasOutput && (displayMode !== "compact" || outputFailed || Boolean(errorText))
-      ? getCompactOutput(part, toolName)
-      : null;
+  // const compactOutput =
+  //   hasOutput && (displayMode !== "compact" || outputFailed || Boolean(errorText))
+  //     ? getCompactOutput(part, toolName)
+  //     : null;
   const stateColor = errorText || outputFailed ? COLORS.danger : getToolCallColor(uiState);
 
   // Compact display: errored/denied tools are handled by the compact projection
@@ -180,7 +180,7 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
 
       {hasOutput && <ToolOutputView part={part} uiState={uiState} />}
 
-      {errorText && (
+      {/* {errorText && (
         <Box paddingLeft={2}>
           <Text color={COLORS.danger} wrap="truncate-end">
             {errorText}
@@ -197,7 +197,7 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
             {compactOutput}
           </Text>
         </Box>
-      )}
+      )} */}
     </Box>
   );
 };
