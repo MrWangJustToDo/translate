@@ -18,6 +18,7 @@ import { createRemoteAgentSessionHost } from "@my-agent/server/client";
 import { AccessControl } from "./access.js";
 import { decodeButtonPayload, PendingInteractionStore, type PendingRecord } from "./interaction/pending.js";
 import { renderReply, renderResolved } from "./interaction/render.js";
+import { createLocalSessionHost } from "./local-host.js";
 import { SessionResolver, sessionKeyOf } from "./session-resolver.js";
 import { StreamUpdater } from "./streaming/stream-updater.js";
 
@@ -485,12 +486,34 @@ function throwHostRequired(): never {
 }
 
 /**
- * Create a bridge bound to a remote agent server — the same session path as the
- * CLI's `--remote-session`. Pass `host` to override (tests / in-process core).
+ * Create a bridge. Default wiring:
+ * - `REMOTE_SESSION` set → remote host (the same session path as the CLI's
+ *   `--remote-session`); pass `host` to override (tests / in-process core).
+ * - no `REMOTE_SESSION` → local mode: in-process host with a local CoreEnv and
+ *   a direct model provider resolved from `.env` (same bootstrap as the CLI's
+ *   local mode).
  */
-export function createImBridge(options: BridgeRuntimeOptions): BridgeRuntime {
-  const host = options.host ?? createRemoteAgentSessionHost({ baseUrl: options.config.remoteSession });
-  return new BridgeRuntime({ ...options, host });
+export async function createImBridge(options: BridgeRuntimeOptions): Promise<BridgeRuntime> {
+  let { config, host } = options;
+  if (!host) {
+    if (config.remoteSession) {
+      host = createRemoteAgentSessionHost({ baseUrl: config.remoteSession });
+    } else {
+      const local = await createLocalSessionHost(config);
+      host = local.host;
+      // Session-create defaults resolved at bootstrap (remote mode leaves them unset).
+      config = {
+        ...config,
+        model: local.defaults.model,
+        modelStyle: local.defaults.style,
+        modelBaseURL: local.defaults.baseURL,
+        modelApiKey: local.defaults.apiKey,
+        modelInfo: local.defaults.modelInfo,
+        systemPrompt: local.defaults.systemPrompt,
+      };
+    }
+  }
+  return new BridgeRuntime({ ...options, config, host });
 }
 
 function describePending(pending: PendingInteraction): string {

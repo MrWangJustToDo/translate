@@ -11,8 +11,12 @@
 import { z } from "zod";
 
 export const bridgeConfigSchema = z.object({
-  /** Agent server base URL (`REMOTE_SESSION`), e.g. `http://localhost:3100`. */
-  remoteSession: z.url(),
+  /**
+   * Agent server base URL (`REMOTE_SESSION`), e.g. `http://localhost:3100`.
+   * Absent ⇒ local mode: the bridge hosts the agent loop in process (CoreEnv +
+   * model provider resolved from `.env`, same bootstrap as the CLI's local mode).
+   */
+  remoteSession: z.url().optional(),
   telegramBotToken: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   /** User id allowlist (comma-separated env). Empty = allow all. */
   allowUsers: z.array(z.string()).default([]),
@@ -21,16 +25,25 @@ export const bridgeConfigSchema = z.object({
   /** Persistent state directory (session mapping journal). */
   dataDir: z.string().default(".agents/im-bridge"),
   /**
-   * Optional model override sent in the `POST /api/agent` body
-   * (`IM_BRIDGE_MODEL`). Leave unset to let the server's own `.env` decide.
+   * Optional model override. Remote: sent in the `POST /api/agent` body
+   * (`IM_BRIDGE_MODEL`), unset lets the server's own `.env` decide. Local:
+   * overrides MODEL from `.env`.
    */
   model: z.string().optional(),
+  /** Local-mode OS sandbox (`SANDBOX_ENV`: local | native). Remote mode ignores this. */
+  sandbox: z.enum(["local", "native"]).default("local"),
   /** Min interval between streaming edits in ms. */
   editIntervalMs: z.number().int().positive().default(3000),
   /** Pending approval / ask_user TTL in ms (auto-deny on expiry). 5 min — IM users answer async. */
   approvalTtlMs: z.number().int().positive().default(300_000),
   /** Prefix for created agent session names (display only). */
   sessionNamePrefix: z.string().default("im"),
+  // Local-mode session defaults, resolved at bootstrap (remote mode leaves unset).
+  modelStyle: z.enum(["openai", "anthropic"]).optional(),
+  modelBaseURL: z.string().optional(),
+  modelApiKey: z.string().optional(),
+  modelInfo: z.unknown().optional(),
+  systemPrompt: z.string().optional(),
 });
 
 export type BridgeConfig = z.infer<typeof bridgeConfigSchema>;
@@ -52,12 +65,13 @@ function toPositiveInt(value: string | undefined): number | undefined {
 /** Parse and validate bridge configuration from an env-like record (defaults to `process.env`). */
 export function parseBridgeConfig(env: Record<string, string | undefined> = process.env): BridgeConfig {
   const result = bridgeConfigSchema.safeParse({
-    remoteSession: env.REMOTE_SESSION,
+    remoteSession: env.REMOTE_SESSION ? z.url().parse(env.REMOTE_SESSION) : undefined,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     allowUsers: splitList(env.IM_BRIDGE_ALLOW_USERS),
     allowChats: splitList(env.IM_BRIDGE_ALLOW_CHATS),
     dataDir: env.IM_BRIDGE_DATA_DIR,
     model: env.IM_BRIDGE_MODEL?.trim() === "" ? undefined : env.IM_BRIDGE_MODEL,
+    sandbox: env.SANDBOX_ENV === "native" ? "native" : "local",
     editIntervalMs: toPositiveInt(env.IM_BRIDGE_EDIT_INTERVAL_MS),
     approvalTtlMs: toPositiveInt(env.IM_BRIDGE_APPROVAL_TTL_MS),
     sessionNamePrefix: env.IM_BRIDGE_SESSION_NAME_PREFIX,

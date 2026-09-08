@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 
 import type { BridgeConfig } from "./config.js";
 import type { ChatTarget } from "./types.js";
-import type { AgentSession, AgentSessionHost } from "@my-agent/core";
+import type { AgentSession, AgentSessionHost, ModelInfo } from "@my-agent/core";
 
 export interface SessionEntry {
   key: string;
@@ -88,12 +88,16 @@ export class SessionResolver {
 
   async create(platform: string, target: ChatTarget, userId: string): Promise<ResolvedSession> {
     const key = sessionKeyOf(platform, target);
-    // Explicit client model wins at the server; otherwise the server resolves
-    // the model from its own `.env` (agent-session.ts — body.model is optional).
+    // Remote: an empty model string defers to the server's own `.env` provider;
+    // local mode passes the bootstrap-resolved connection through.
     const { session } = await this.host.create({
       name: `${this.config.sessionNamePrefix}:${key}`,
-      // Empty model string ⇒ the server falls back to its own `.env` provider.
       model: this.config.model ?? "",
+      ...(this.config.modelStyle ? { modelStyle: this.config.modelStyle } : {}),
+      ...(this.config.modelBaseURL ? { modelBaseURL: this.config.modelBaseURL } : {}),
+      ...(this.config.modelApiKey ? { modelApiKey: this.config.modelApiKey } : {}),
+      ...(this.config.modelInfo !== undefined ? { modelInfo: this.config.modelInfo as ModelInfo } : {}),
+      ...(this.config.systemPrompt ? { systemPrompt: this.config.systemPrompt } : {}),
     });
     const entry: SessionEntry = { key, agentId: session.id, createdBy: userId, lastActiveAt: Date.now() };
     this.entries.set(key, entry);

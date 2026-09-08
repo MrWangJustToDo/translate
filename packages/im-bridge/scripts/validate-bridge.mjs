@@ -163,7 +163,7 @@ async function startBridge(env = {}) {
   const host = createFakeHost();
   const adapter = createMockAdapter();
   const errors = [];
-  const bridge = createImBridge({
+  const bridge = await createImBridge({
     config,
     adapter,
     host,

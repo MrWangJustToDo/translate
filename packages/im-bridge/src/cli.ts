@@ -3,14 +3,17 @@
  * my-agent-im-bridge — bin entry.
  *
  * Env (see .env at the repo root, same dotenv convention as the server):
- * - REMOTE_SESSION            agent server base URL (required), e.g. http://localhost:3100
+ * - REMOTE_SESSION            agent server base URL (optional) — absent ⇒ local mode
  * - TELEGRAM_BOT_TOKEN        BotFather token (required)
  * - IM_BRIDGE_ALLOW_USERS     comma-separated user ids (empty = allow all)
  * - IM_BRIDGE_ALLOW_CHATS     comma-separated chat ids (empty = allow all)
  * - IM_BRIDGE_DATA_DIR        state dir (default .agents/im-bridge)
- * - IM_BRIDGE_MODEL           optional model override (default: server's own .env)
+ * - IM_BRIDGE_MODEL           optional model override (remote: sent to server; local: overrides MODEL)
  * - IM_BRIDGE_EDIT_INTERVAL_MS  streaming edit throttle (default 3000)
- * - IM_BRIDGE_APPROVAL_TTL_MS   approval/ask_user auto-deny TTL (default 60000)
+ * - IM_BRIDGE_APPROVAL_TTL_MS   approval/ask_user auto-deny TTL (default 300000)
+ *
+ * Local mode (no REMOTE_SESSION) also reads MODEL / MODEL_STYLE / BASE_URL /
+ * API_KEY / SANDBOX_ENV — same env as the CLI local mode.
  */
 
 import "dotenv/config";
@@ -26,9 +29,10 @@ function log(error: unknown): void {
 async function main(): Promise<void> {
   const config = parseBridgeConfig();
   const adapter = new TelegramAdapter({ botToken: config.telegramBotToken, onError: log });
-  const bridge = createImBridge({ config, adapter, onError: log });
+  const bridge = await createImBridge({ config, adapter, onError: log });
   await bridge.start();
-  console.log(`[im-bridge] telegram bridge started → ${config.remoteSession}`);
+  const target = config.remoteSession ? `remote session ${config.remoteSession}` : "local mode";
+  console.log(`[im-bridge] telegram bridge started → ${target}`);
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[im-bridge] ${signal} — shutting down`);

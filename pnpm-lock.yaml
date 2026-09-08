@@ -328,6 +328,9 @@ importers:
       '@my-agent/core':
         specifier: workspace:*
         version: link:../core
+      '@my-agent/node':
+        specifier: workspace:*
+        version: link:../node
       '@my-agent/server':
         specifier: workspace:*
         version: link:../server
