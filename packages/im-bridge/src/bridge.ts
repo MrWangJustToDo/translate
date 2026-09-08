@@ -51,9 +51,8 @@ interface ReplyCycle {
   finalizeTimer: ReturnType<typeof setTimeout> | null;
   /** Periodic sendChatAction while the run works but nothing streamed yet. */
   typingTimer: ReturnType<typeof setInterval> | null;
-  /** Separate streaming message showing the animated thinking preview. */
+  /** Separate streaming message showing the thinking preview. */
   thinkingUpdater: StreamUpdater | null;
-  thinkingFrame: number;
   thinkingDone: boolean;
   /** Whether any thinking content was seen this cycle (controls the done label / cleanup). */
   sawThinking: boolean;
@@ -64,9 +63,6 @@ interface ReplyCycle {
 }
 
 const IDLE_FINALIZE_DELAY_MS = 500;
-
-/** Braille spinner frames — rotated per render so the edit cadence animates the thinking row. */
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
  * Statuses that mean a run has really finished.
@@ -277,7 +273,6 @@ export class BridgeRuntime {
       finalizeTimer: null,
       typingTimer: null,
       thinkingUpdater: null,
-      thinkingFrame: 0,
       thinkingDone: false,
       sawThinking: false,
       latestThinkingText: "",
@@ -391,10 +386,9 @@ export class BridgeRuntime {
 
   /**
    * Reasoning models can think for 25s+ before the first answer token — show
-   * the thinking progress in a SEPARATE message: a spinner frame (rotated per
-   * render, so the edit throttle animates it) + the first 100 chars of the
-   * latest thinking. Stops once answer text starts; the row is finalized to
-   * a done marker.
+   * the thinking progress in a SEPARATE message: a static 💭 icon + the first
+   * 100 chars of the latest thinking. Stops once answer text starts; the row
+   * is finalized to a done marker.
    */
   private updateThinkingPreview(cycle: ReplyCycle, rendered: { text: string; thinking: string }): void {
     if (cycle.thinkingDone) return;
@@ -405,9 +399,7 @@ export class BridgeRuntime {
       return;
     }
     cycle.sawThinking = true;
-    const frame = SPINNER_FRAMES[cycle.thinkingFrame % SPINNER_FRAMES.length];
-    cycle.thinkingFrame += 1;
-    const preview = `${frame} 思考中 · ${rendered.thinking.slice(0, 100)}`;
+    const preview = `💭 思考中 · ${rendered.thinking.slice(0, 100)}`;
     cycle.latestThinkingText = preview;
     if (cycle.thinkingUpdater) cycle.thinkingUpdater.update(preview);
   }
