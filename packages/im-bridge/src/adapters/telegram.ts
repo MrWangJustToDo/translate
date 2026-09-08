@@ -257,10 +257,6 @@ export class TelegramAdapter implements ChatAdapter {
     await this.bot.api.sendChatAction(target.chatId, "typing");
   }
 
-  async deleteMessage(target: ChatTarget, messageId: string): Promise<void> {
-    await this.bot.api.deleteMessage(target.chatId, Number(messageId));
-  }
-
   private registerHandlers(): void {
     this.bot.on("message", async (ctx) => {
       const message = ctx.message as unknown as RawMessage | undefined;

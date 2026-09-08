@@ -42,10 +42,6 @@ export class StreamUpdater {
   private closed = false;
   /** True once any in-place edit has succeeded — used to stop typing heartbeats. */
   hasEdited = false;
-  /** The edited message's id — lets the runtime delete/clean up the row. */
-  get messageId(): string {
-    return this.reply.messageId;
-  }
 
   constructor(options: StreamUpdaterOptions) {
     this.adapter = options.adapter;

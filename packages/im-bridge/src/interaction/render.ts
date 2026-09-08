@@ -26,8 +26,6 @@ const ERROR_EXCERPT_LIMIT = 200;
 export interface RenderedReply {
   /** Assistant text plus collapsed tool status lines, current run only. */
   text: string;
-  /** Latest thinking content of the current run ("" once absent) — rendered separately by the runtime. */
-  thinking: string;
   /** Interactions awaiting a user answer, in message order. */
   pending: PendingInteraction[];
 }
@@ -253,24 +251,17 @@ export function renderReply(messages: UIMessage[]): RenderedReply {
   const pending = scanPendingInteractions(run);
 
   const lines: string[] = [];
-  let textChars = 0;
-  let lastThinking = "";
   for (const message of run) {
     for (const part of message.parts) {
       if (part.type === "text") {
-        if (part.content.trim().length > 0) {
-          lines.push(part.content);
-          textChars += part.content.length;
-        }
+        if (part.content.trim().length > 0) lines.push(part.content);
       } else if (isToolCallPart(part)) {
         lines.push(toolStatusLine(part));
-      } else if (part.type === "thinking" && part.content) {
-        lastThinking = part.content;
       }
     }
   }
 
-  return { text: lines.join("\n\n").trim(), thinking: textChars === 0 ? lastThinking : "", pending };
+  return { text: lines.join("\n\n").trim(), pending };
 }
 
 /** Render the final state of a just-answered interaction (button row cleanup). */
