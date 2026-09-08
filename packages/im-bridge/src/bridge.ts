@@ -51,11 +51,18 @@ interface ReplyCycle {
   finalizeTimer: ReturnType<typeof setTimeout> | null;
   /** Periodic sendChatAction while the run works but nothing streamed yet. */
   typingTimer: ReturnType<typeof setInterval> | null;
+  /** Separate streaming message showing the animated thinking preview. */
+  thinkingUpdater: StreamUpdater | null;
+  thinkingFrame: number;
+  thinkingDone: boolean;
   /** Interaction ids already registered as buttons on this cycle. */
   registered: Set<string>;
 }
 
 const IDLE_FINALIZE_DELAY_MS = 500;
+
+/** Braille spinner frames — rotated per render so the edit cadence animates the thinking row. */
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
  * Statuses that mean a run has really finished.
@@ -265,6 +272,9 @@ export class BridgeRuntime {
       }),
       finalizeTimer: null,
       typingTimer: null,
+      thinkingUpdater: null,
+      thinkingFrame: 0,
+      thinkingDone: false,
       registered: new Set(),
     };
     this.cycles.set(chatKey, cycle);
@@ -343,6 +353,57 @@ export class BridgeRuntime {
     // The streaming message shows assistant text + tool status lines only.
     if (cycle.updater) cycle.updater.update(rendered.text);
     else cycle.pendingText = rendered.text;
+    this.updateThinkingPreview(cycle, rendered);
+  }
+
+  /**
+   * Reasoning models can think for 25s+ before the first answer token — show
+   * the thinking progress in a SEPARATE message: a spinner frame (rotated per
+   * render, so the edit throttle animates it) + the first 100 chars of the
+   * latest thinking. Stops once answer text starts; the row is finalized to
+   * a done marker.
+   */
+  private updateThinkingPreview(cycle: ReplyCycle, rendered: { text: string; thinking: string }): void {
+    if (cycle.thinkingDone) return;
+    if (!rendered.thinking) {
+      // Answer text (or tool lines) started — or thinking hasn't begun. If a
+      // preview row exists, close it; if thinking shows up later mid-run
+      // (post-steer continuation) a fresh row can still open.
+      if (cycle.thinkingUpdater && rendered.text) this.finishThinkingPreview(cycle);
+      return;
+    }
+    const frame = SPINNER_FRAMES[cycle.thinkingFrame % SPINNER_FRAMES.length];
+    cycle.thinkingFrame += 1;
+    const preview = `${frame} 思考中 · ${rendered.thinking.slice(0, 100)}`;
+    if (cycle.thinkingUpdater) {
+      cycle.thinkingUpdater.update(preview);
+      return;
+    }
+    void this.adapter
+      .sendText(cycle.chat, preview)
+      .then((ref) => {
+        const updater = new StreamUpdater({
+          adapter: this.adapter,
+          reply: ref,
+          editIntervalMs: this.config.editIntervalMs,
+          onError: this.onError,
+        });
+        cycle.thinkingUpdater = updater;
+        if (cycle.closed || cycle.thinkingDone) {
+          updater.update("💭 思考完成");
+          void updater.finalize().catch(() => {});
+        }
+      })
+      .catch((error) => this.onError(error));
+  }
+
+  private finishThinkingPreview(cycle: ReplyCycle): void {
+    cycle.thinkingDone = true;
+    const updater = cycle.thinkingUpdater;
+    if (updater) {
+      updater.update("💭 思考完成");
+      void updater.finalize().catch((error) => this.onError(error));
+    }
   }
 
   private async postInteractionMessage(cycle: ReplyCycle, pending: PendingInteraction): Promise<void> {
@@ -422,6 +483,7 @@ export class BridgeRuntime {
       // a fresh message instead of dropping the run's reply.
       await this.safeSendText(cycle.chat, text);
     }
+    if (!cycle.thinkingDone) this.finishThinkingPreview(cycle);
     cycle.unsubscribe();
   }
 

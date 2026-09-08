@@ -9,7 +9,7 @@
  * - IM_BRIDGE_ALLOW_CHATS     comma-separated chat ids (empty = allow all)
  * - IM_BRIDGE_DATA_DIR        state dir (default .agents/im-bridge)
  * - IM_BRIDGE_MODEL           optional model override (remote: sent to server; local: overrides MODEL)
- * - IM_BRIDGE_EDIT_INTERVAL_MS  streaming edit throttle (default 1500)
+ * - IM_BRIDGE_EDIT_INTERVAL_MS  streaming edit throttle (default 2000)
  * - IM_BRIDGE_APPROVAL_TTL_MS   approval/ask_user auto-deny TTL (default 300000)
  *
  * Local mode (no REMOTE_SESSION) resolves the model through the unified

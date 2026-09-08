@@ -26,6 +26,8 @@ const ERROR_EXCERPT_LIMIT = 200;
 export interface RenderedReply {
   /** Assistant text plus collapsed tool status lines, current run only. */
   text: string;
+  /** Latest thinking content of the current run ("" once absent) — rendered separately by the runtime. */
+  thinking: string;
   /** Interactions awaiting a user answer, in message order. */
   pending: PendingInteraction[];
 }
@@ -268,14 +270,7 @@ export function renderReply(messages: UIMessage[]): RenderedReply {
     }
   }
 
-  // Reasoning models can think for 25s+ before the first visible text token —
-  // surface a live thinking preview instead of a frozen message (kept only
-  // while no answer text exists yet; tool lines already show activity).
-  if (textChars === 0 && lastThinking) {
-    lines.push(`💭 ${lastThinking.replace(/\s+/g, " ").trim().slice(-120)}`);
-  }
-
-  return { text: lines.join("\n\n").trim(), pending };
+  return { text: lines.join("\n\n").trim(), thinking: textChars === 0 ? lastThinking : "", pending };
 }
 
 /** Render the final state of a just-answered interaction (button row cleanup). */
