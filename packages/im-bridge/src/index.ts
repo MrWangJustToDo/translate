@@ -9,6 +9,7 @@
  */
 
 export { BridgeRuntime, createImBridge, type BridgeRuntimeOptions } from "./bridge.js";
+export { createLocalSessionHost, type LocalSessionDefaults } from "./local-host.js";
 export { bridgeConfigSchema, parseBridgeConfig, type BridgeConfig } from "./config.js";
 export { AccessControl } from "./access.js";
 export {

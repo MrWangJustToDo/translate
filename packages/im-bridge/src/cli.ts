@@ -12,8 +12,9 @@
  * - IM_BRIDGE_EDIT_INTERVAL_MS  streaming edit throttle (default 3000)
  * - IM_BRIDGE_APPROVAL_TTL_MS   approval/ask_user auto-deny TTL (default 300000)
  *
- * Local mode (no REMOTE_SESSION) also reads MODEL / MODEL_STYLE / BASE_URL /
- * API_KEY / SANDBOX_ENV — same env as the CLI local mode.
+ * Local mode (no REMOTE_SESSION) resolves the model through the unified
+ * pipeline: `.agents/config/models.json` first (same as the CLI), then `.env`
+ * (MODEL / MODEL_STYLE / BASE_URL / API_KEY); SANDBOX_ENV selects the sandbox.
  */
 
 import "dotenv/config";
