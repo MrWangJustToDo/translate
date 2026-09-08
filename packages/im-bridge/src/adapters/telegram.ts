@@ -77,6 +77,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 /** Bridge-level commands; Telegram-specific `/cmd@OtherBot` addressing is filtered. */
 const COMMAND_PATTERN = /^\/(new|stop)(?:@([\w-]+))?(?:\s|$)/;
 
+/** Registered via setMyCommands so the `/` menu reflects the bridge's commands. Keep in sync with COMMAND_PATTERN. */
+const BRIDGE_COMMANDS: Array<{ command: string; description: string }> = [
+  { command: "new", description: "Clear the current session and start fresh" },
+  { command: "stop", description: "Stop the running task" },
+];
+
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -179,6 +185,9 @@ export class TelegramAdapter implements ChatAdapter {
       TG_INIT_TIMEOUT_MS,
       "Telegram getMe timed out — check TELEGRAM_BOT_TOKEN and network reachability to api.telegram.org"
     );
+    // Expose the bridge's slash commands in the Telegram `/` menu. Best-effort:
+    // a registration failure must not block startup (polling still works).
+    await withFloodRetry(() => this.bot.api.setMyCommands(BRIDGE_COMMANDS)).catch((error) => this.onError(error));
     // bot.start() long-polls until stop(); it must not be awaited here.
     void this.bot
       .start({
