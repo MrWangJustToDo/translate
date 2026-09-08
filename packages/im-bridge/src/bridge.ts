@@ -136,6 +136,12 @@ export class BridgeRuntime {
         return;
       }
       if (msg.command === "new") {
+        // Stop an in-flight run first — finalizeCycleObject skips active runs
+        // (see the stale-finalize guard there), so clearing must not race one.
+        const active = this.activeSessions.get(sessionKeyOf(msg.platform, msg.chat));
+        if (active && isActiveStatus(active.getSnapshot().status)) {
+          await this.dispatch(active, { type: "stop" });
+        }
         await this.finalizeCycle(msg.platform, msg.chat);
         await this.resolver.reset(msg.platform, msg.chat);
         await this.safeSendText(msg.chat, "🔄 Session cleared. Send a message to start a new one.");
@@ -294,8 +300,14 @@ export class BridgeRuntime {
         return;
       }
       if (event.channel === "state") {
-        const snapshot = this.activeSessions.get(cycle.chatKey)?.getSnapshot();
-        if (snapshot && isRunFinished(snapshot.status)) this.scheduleFinalize(cycle);
+        // Trust the EVENT's status, not a fresh snapshot re-read: a new run's
+        // first state event can arrive while the snapshot still holds the
+        // PREVIOUS run's "completed" — re-reading here armed a finalize that
+        // killed the just-started run's cycle (the "✅ done" bug).
+        const status =
+          (event.payload as { status?: string } | undefined)?.status ??
+          this.activeSessions.get(cycle.chatKey)?.getSnapshot().status;
+        if (status && isRunFinished(status)) this.scheduleFinalize(cycle);
       }
     } catch (error) {
       this.onError(error);
@@ -344,6 +356,10 @@ export class BridgeRuntime {
   private scheduleFinalize(cycle: ReplyCycle): void {
     if (cycle.finalizeTimer !== null) return;
     cycle.finalizeTimer = setTimeout(() => {
+      // Reset BEFORE running: a skipped finalize (new run started, see
+      // finalizeCycleObject) must leave the timer re-armable for the run's own
+      // completed event, and retireCycle only clears a PENDING timer.
+      cycle.finalizeTimer = null;
       void this.finalizeCycleObject(cycle);
     }, IDLE_FINALIZE_DELAY_MS);
   }
@@ -354,6 +370,12 @@ export class BridgeRuntime {
   }
 
   private async finalizeCycleObject(cycle: ReplyCycle): Promise<void> {
+    // The finalize decision was made up to IDLE_FINALIZE_DELAY_MS ago —
+    // re-check before retiring: a steer continuation or the next run may have
+    // flipped the status back to active, and retiring now would kill the live
+    // stream and lose the run's output (rendered as the empty "✅ done").
+    const status = this.activeSessions.get(cycle.chatKey)?.getSnapshot().status ?? "idle";
+    if (isActiveStatus(status)) return;
     await this.retireCycle(cycle, renderReply(this.activeSessionMessages(cycle.chatKey)).text || "✅ done");
   }
 
