@@ -13,6 +13,7 @@
  * default — the same path as the CLI's `--remote-session`.
  */
 
+import { isActiveStatus } from "@my-agent/core";
 import { createRemoteAgentSessionHost } from "@my-agent/server/client";
 
 import { AccessControl } from "./access.js";
@@ -150,13 +151,28 @@ export class BridgeRuntime {
       void this.adapter.setTyping?.(msg.chat).catch(() => {});
 
       const { session } = await this.resolveSession(msg);
-      const running = session.getSnapshot().status === "running";
+      const status = session.getSnapshot().status;
+      // Active-run detection mirrors the app layer: mid-run status flickers
+      // through thinking/responding/waiting/compacting — steering into all of
+      // them keeps ONE live stream instead of finalizing the cycle and
+      // splitting the run across chat messages (with duplicate dead buttons).
+      // `awaiting_user` is excluded: the agent is paused on a client tool, the
+      // text is a new turn, not a steer into the paused pump.
+      const running = isActiveStatus(status) && status !== "awaiting_user";
       if (running) {
         // Steer into the running cycle. Finalizing + a new placeholder here
         // would split one run across multiple chat messages AND re-register
         // its pending interactions as duplicate (dead) button rows — the old
         // buttons stay clickable-looking but resolve to "expired".
-        await this.dispatch(session, { type: "steer", content: msg.text });
+        const steer = await this.dispatch(session, { type: "steer", content: msg.text });
+        if (!steer.ok && (steer as { code?: string }).code === "not_found") {
+          // Stale mapping (e.g. server restarted) — heal and start fresh
+          // instead of silently swallowing every following message.
+          this.resolver.invalidate(msg.platform, msg.chat);
+          const healed = await this.resolveSession(msg);
+          const cycle = this.beginReplyCycle(healed.session, msg);
+          if (cycle) await this.dispatch(healed.session, { type: "send", content: msg.text });
+        }
         return;
       }
       await this.finalizeCycle(msg.platform, msg.chat);
@@ -187,8 +203,10 @@ export class BridgeRuntime {
       if (!result.ok) {
         // Transport failures (e.g. the blocking dispatch outlasting the HTTP
         // headers timeout) happen WHILE the run is live — the SSE cycle keeps
-        // streaming, so only retire when no run is actually going.
-        if (isRunFinished(session.getSnapshot().status)) {
+        // streaming, so only retire when no run is actually going (finished
+        // OR never started — e.g. ECONNREFUSED while the snapshot was idle).
+        const status = session.getSnapshot().status;
+        if (isRunFinished(status) || !isActiveStatus(status)) {
           const detail = result.error ?? "dispatch failed";
           await this.retireCycle(cycle, `⚠️ ${detail.slice(0, 300)}`);
         }
@@ -390,8 +408,11 @@ export class BridgeRuntime {
       }
 
       const session = this.activeSessions.get(record.chatKey);
-      const outcome = await this.applyInteraction(session, record, payload);
+      // Ack FIRST — applyInteraction's dispatch blocks until the rest of the
+      // run finishes, and Telegram expires the callback after ~3s (spinner on
+      // the button). The confirmation edit lands when the outcome is known.
       await cb.ack();
+      const outcome = await this.applyInteraction(session, record, payload);
       await this.safeEditText(cb, renderResolved(describePending(record.pending), outcome));
     } catch (error) {
       this.onError(error);
