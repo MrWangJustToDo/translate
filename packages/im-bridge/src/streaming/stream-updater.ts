@@ -53,6 +53,10 @@ export class StreamUpdater {
   /** Queue a throttled in-place edit with the latest content. */
   update(text: string, buttons?: Button[]): void {
     if (this.closed) return;
+    // Never regress to empty: the current-run window transiently resets when a
+    // steered user message re-baselines it (renderReply returns "" for a few
+    // events), and Telegram rejects empty edits with 400 "message text is empty".
+    if (text.length === 0) return;
     if (text === this.latestText && buttons === this.latestButtons) return;
     this.latestText = text;
     this.latestButtons = buttons;
@@ -82,6 +86,9 @@ export class StreamUpdater {
       this.editTimer = null;
     }
     const refs: SentMessageRef[] = [this.reply];
+    // Nothing ever streamed (or only-empty windows) — keep the placeholder as
+    //-is instead of editing it to an empty string (Telegram 400).
+    if (this.latestText.trim().length === 0) return refs;
     const chunks = splitMessage(this.latestText, this.adapter.caps.maxTextLength);
     const [head, ...rest] = chunks;
     await this.enqueue(() => this.editWithBackoff(head, this.latestButtons));
