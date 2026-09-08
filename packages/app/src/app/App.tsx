@@ -1,6 +1,5 @@
 import { Box } from "ink";
 
-import { Debug } from "../components/Debug.js";
 import { Help } from "../components/Help.js";
 import { useConfig } from "../hooks/use-config.js";
 import { useTheme } from "../hooks/use-theme.js";
@@ -12,7 +11,6 @@ export const App = () => {
   useTheme((s) => s.theme);
 
   const helpRequested = useConfig((s) => s.helpRequested);
-  const debug = useConfig((s) => s.config.debug);
 
   if (helpRequested) {
     return (
@@ -24,7 +22,6 @@ export const App = () => {
 
   return (
     <Box flexDirection="column">
-      {debug && <Debug />}
       <Agent />
     </Box>
   );

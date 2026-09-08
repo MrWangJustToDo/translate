@@ -15,7 +15,6 @@ import { clearExtensionCommands, syncExtensionCommands } from "../commands";
 import { useConfig } from "../hooks/use-config.js";
 
 import type { AppConfig, InitResult } from "./types.js";
-import type { useAgentLog as useAgentLogType } from "../hooks/use-agent-log.js";
 import type { useAgent as useAgentType } from "../hooks/use-agent.js";
 import type { useTodoManager as useTodoManagerType } from "../hooks/use-todo-manager.js";
 import type { AgentSession, AgentSessionHost } from "@my-agent/core";
@@ -38,7 +37,6 @@ export function bindAgentSession(
 
 export interface AdapterHooks {
   useAgent: typeof useAgentType;
-  useAgentLog: typeof useAgentLogType;
   useTodoManager: typeof useTodoManagerType;
 }
 
@@ -96,7 +94,7 @@ export async function createAgentFromConfig({ config, name, hooks, host }: Creat
     ...(config.toolConfig ? { toolConfig: config.toolConfig } : {}),
   });
 
-  const { useAgent, useAgentLog, useTodoManager } = hooks;
+  const { useAgent, useTodoManager } = hooks;
   const snap = session.getSnapshot();
   const initial = initialMessages ?? [];
 
@@ -118,7 +116,6 @@ export async function createAgentFromConfig({ config, name, hooks, host }: Creat
   // The caller registers after its initId guard, so a stale init's session never
   // enters the store.
   useAgent.getActions().setHost(host);
-  useAgentLog.getActions().clear();
   useTodoManager.getActions().setFromSession(snap.todos, snap.todosTitle);
   syncExtensionCommands(session);
 
@@ -157,12 +154,11 @@ export async function createSessionOnHost({
     ...(config.toolConfig ? { toolConfig: config.toolConfig } : {}),
   });
 
-  const { useAgent, useAgentLog, useTodoManager } = hooks;
+  const { useAgent, useTodoManager } = hooks;
   const snap = session.getSnapshot();
   const initial = initialMessages ?? [];
 
   useAgent.getActions().registerSession(session, { activate: true });
-  useAgentLog.getActions().clear();
   useTodoManager.getActions().setFromSession(snap.todos, snap.todosTitle);
   syncExtensionCommands(session);
 
@@ -173,6 +169,5 @@ export function clearAdapterHooks(hooks: AdapterHooks): void {
   clearExtensionCommands();
   hooks.useAgent.getActions().setHost(null);
   hooks.useAgent.getActions().setSession(null);
-  hooks.useAgentLog.getActions().clear();
   hooks.useTodoManager.getActions().clear();
 }

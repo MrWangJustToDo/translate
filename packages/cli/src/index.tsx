@@ -7,7 +7,6 @@ import {
   initHighlighter,
   configureEnv,
   useAgent,
-  useAgentLog,
   useConfig,
   useTodoManager,
 } from "@my-agent/app";
@@ -165,7 +164,7 @@ const adapter = new LocalAgentAdapter({
     setTimeout(() => process.exit(0), 200);
   },
   readClipboardImage,
-  hooks: { useAgent, useAgentLog, useTodoManager },
+  hooks: { useAgent, useTodoManager },
 });
 
 /** CSI hide — re-sent after every frame so the hardware cursor stays off. */

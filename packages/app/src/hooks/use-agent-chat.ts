@@ -10,7 +10,6 @@ import { getActiveHost, resolveAgentSession } from "../utils/session-resolve.js"
 import { isToolCallPart, isPendingToolApproval, parseToolInput } from "../utils/tool-part.js";
 import { handleToolLifecycleEvent } from "../utils/tool-timing-store.js";
 
-import { bindSessionLog } from "./use-agent-log.js";
 import { useAgentStatus } from "./use-agent-status.js";
 import { useAgent } from "./use-agent.js";
 import { useCallbackRef } from "./use-callback-ref.js";
@@ -235,7 +234,6 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
     if (!session) return;
 
     const setAgentStatus = useAgentStatus.getActions().setStatus;
-    const unsubLog = bindSessionLog(session);
 
     const updateUi = throttle((next: UIMessage[]) => {
       setMessages(next);
@@ -276,7 +274,6 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
 
     return () => {
       unsub();
-      unsubLog();
     };
   }, [session, forceUpdate]);
 
