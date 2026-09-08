@@ -18,9 +18,10 @@ import { createRemoteAgentSessionHost } from "@my-agent/server/client";
 
 import { AccessControl } from "./access.js";
 import { decodeButtonPayload, PendingInteractionStore, type PendingRecord } from "./interaction/pending.js";
-import { renderReply, renderResolved } from "./interaction/render.js";
+import { renderReply, renderResolved, renderRunAnswer, renderRunToolLines } from "./interaction/render.js";
 import { createLocalSessionHost } from "./local-host.js";
 import { SessionResolver, sessionKeyOf } from "./session-resolver.js";
+import { splitMessage } from "./streaming/splitter.js";
 import { StreamUpdater } from "./streaming/stream-updater.js";
 
 import type { BridgeConfig } from "./config.js";
@@ -273,7 +274,10 @@ export class BridgeRuntime {
     // "typing…" during thinking/tool phases instead of looking dead.
     if (this.adapter.setTyping) {
       cycle.typingTimer = setInterval(() => {
-        if (cycle.closed || cycle.updater?.hasEdited) {
+        // Stream mode: typing stops once the reply starts editing in place.
+        // No-stream mode: typing runs for the whole run (nothing answers until
+        // the final message lands).
+        if (cycle.closed || (this.config.streamReply && cycle.updater?.hasEdited)) {
           if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
           cycle.typingTimer = null;
           return;
@@ -347,9 +351,11 @@ export class BridgeRuntime {
       // approvals/ask_user on a shared streaming message.
       void this.postInteractionMessage(cycle, pending);
     }
-    // The streaming message shows assistant text + tool status lines only.
-    if (cycle.updater) cycle.updater.update(rendered.text);
-    else cycle.pendingText = rendered.text;
+    // The streaming message: full reply in stream mode, tool progress lines only
+    // in no-stream mode (the answer is delivered fresh once the run completes).
+    const progress = this.config.streamReply ? rendered.text : renderRunToolLines(messages);
+    if (cycle.updater) cycle.updater.update(progress);
+    else cycle.pendingText = progress;
   }
 
   private async postInteractionMessage(cycle: ReplyCycle, pending: PendingInteraction): Promise<void> {
@@ -399,11 +405,23 @@ export class BridgeRuntime {
     // stream and lose the run's output (rendered as the empty "✅ done").
     const status = this.activeSessions.get(cycle.chatKey)?.getSnapshot().status ?? "idle";
     if (isActiveStatus(status)) return;
-    await this.retireCycle(cycle, renderReply(this.activeSessionMessages(cycle.chatKey)).text || "✅ done");
+    const messages = this.activeSessionMessages(cycle.chatKey);
+    if (this.config.streamReply) {
+      await this.retireCycle(cycle, renderReply(messages).text || "✅ done");
+    } else {
+      const answer = renderRunAnswer(messages);
+      await this.retireCycle(cycle, renderRunToolLines(messages), answer || "✅ done");
+    }
   }
 
-  /** Retire a cycle: write the final text, close the updater, unsubscribe. */
-  private async retireCycle(cycle: ReplyCycle, text: string): Promise<void> {
+  /**
+   * Retire a cycle: write the final text, close the updater, unsubscribe.
+   *
+   * `progressText` lands on the streaming row. `answerText` (no-stream mode)
+   * is the run's answer, delivered as fresh complete message(s) — split when
+   * over the platform limit.
+   */
+  private async retireCycle(cycle: ReplyCycle, progressText: string, answerText?: string): Promise<void> {
     if (cycle.closed) return;
     cycle.closed = true;
     if (cycle.finalizeTimer !== null) {
@@ -419,10 +437,10 @@ export class BridgeRuntime {
     // in that window; events must never reach the retiring cycle again.
     if (this.cycles.get(cycle.chatKey) === cycle) this.cycles.delete(cycle.chatKey);
     cycle.unsubscribe();
-    cycle.pendingText = text;
+    cycle.pendingText = progressText;
     const updater = cycle.updater;
     if (updater) {
-      updater.update(text);
+      updater.update(progressText);
       try {
         await updater.finalize();
       } catch (error) {
@@ -431,7 +449,14 @@ export class BridgeRuntime {
     } else {
       // Placeholder never resolved (send failed) — deliver the final text as
       // a fresh message instead of dropping the run's reply.
-      await this.safeSendText(cycle.chat, text);
+      await this.safeSendText(cycle.chat, progressText || answerText || "✅ done");
+    }
+    if (answerText) {
+      // No-stream mode: the answer goes out as complete message(s), never as
+      // mid-run edits.
+      for (const chunk of splitMessage(answerText, this.adapter.caps.maxTextLength)) {
+        await this.safeSendText(cycle.chat, chunk);
+      }
     }
   }
 

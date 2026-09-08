@@ -273,6 +273,28 @@ export function renderReply(messages: UIMessage[]): RenderedReply {
   return { text: lines.join("\n\n").trim(), pending };
 }
 
+/** Tool status lines only — the live progress row when answer streaming is off. */
+export function renderRunToolLines(messages: UIMessage[]): string {
+  const lines: string[] = [];
+  for (const message of currentRunMessages(messages)) {
+    for (const part of message.parts) {
+      if (isToolCallPart(part)) lines.push(toolStatusLine(part));
+    }
+  }
+  return lines.join("\n\n");
+}
+
+/** Assistant answer text only — the final reply when answer streaming is off. */
+export function renderRunAnswer(messages: UIMessage[]): string {
+  const parts: string[] = [];
+  for (const message of currentRunMessages(messages)) {
+    for (const part of message.parts) {
+      if (part.type === "text" && part.content.trim().length > 0) parts.push(part.content);
+    }
+  }
+  return parts.join("\n\n").trim();
+}
+
 /** Render the final state of a just-answered interaction (button row cleanup). */
 export function renderResolved(question: string, outcome: string): string {
   return `${question}\n\n→ ${outcome}`;

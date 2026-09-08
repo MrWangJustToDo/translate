@@ -34,6 +34,12 @@ export const bridgeConfigSchema = z.object({
   sandbox: z.enum(["local", "native"]).default("local"),
   /** Min interval between streaming edits in ms. 2s keeps Telegram edit rate limits comfortable. */
   editIntervalMs: z.number().int().positive().default(2000),
+  /**
+   * Stream the answer text into the reply while it generates (edit-based).
+   * Default OFF: the progress row shows tool status lines only and the answer
+   * is delivered as complete message(s) once the run finishes (opencode-style).
+   */
+  streamReply: z.boolean().default(false),
   /** Pending approval / ask_user TTL in ms (auto-deny on expiry). 5 min — IM users answer async. */
   approvalTtlMs: z.number().int().positive().default(300_000),
   /** Prefix for created agent session names (display only). */
@@ -73,6 +79,10 @@ export function parseBridgeConfig(env: Record<string, string | undefined> = proc
     model: env.IM_BRIDGE_MODEL?.trim() === "" ? undefined : env.IM_BRIDGE_MODEL,
     sandbox: env.SANDBOX_ENV === "native" ? "native" : "local",
     editIntervalMs: toPositiveInt(env.IM_BRIDGE_EDIT_INTERVAL_MS),
+    streamReply:
+      env.IM_BRIDGE_STREAM_REPLY === undefined
+        ? undefined
+        : ["1", "true", "yes", "on"].includes(env.IM_BRIDGE_STREAM_REPLY.trim().toLowerCase()),
     approvalTtlMs: toPositiveInt(env.IM_BRIDGE_APPROVAL_TTL_MS),
     sessionNamePrefix: env.IM_BRIDGE_SESSION_NAME_PREFIX,
   });
