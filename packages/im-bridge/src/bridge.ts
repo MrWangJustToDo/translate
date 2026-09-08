@@ -310,6 +310,7 @@ export class BridgeRuntime {
   }
 
   private onSessionEvent(cycle: ReplyCycle, event: { channel: string; payload: unknown }): void {
+    if (cycle.closed) return;
     try {
       if (event.channel === "messages") {
         this.renderCycle(cycle, event.payload as UIMessage[]);
@@ -331,11 +332,17 @@ export class BridgeRuntime {
   }
 
   private renderCycle(cycle: ReplyCycle, messages: UIMessage[]): void {
+    if (cycle.closed) return;
     const rendered = renderReply(messages);
     for (const pending of rendered.pending) {
       const id = pending.kind === "approval" ? pending.approvalId : pending.toolCallId;
       if (cycle.registered.has(id)) continue;
       cycle.registered.add(id);
+      // Cross-cycle dedup: during a retire/recreate window two cycles can both
+      // receive events (each keeps its own `registered` set) — the interaction
+      // must only ever be posted once.
+      if (this.postedInteractionIds.has(id)) continue;
+      this.rememberPostedInteraction(id);
       // One dedicated message per interaction — buttons never mix across
       // approvals/ask_user on a shared streaming message.
       void this.postInteractionMessage(cycle, pending);
@@ -407,7 +414,11 @@ export class BridgeRuntime {
       clearInterval(cycle.typingTimer);
       cycle.typingTimer = null;
     }
+    // Detach from the event stream FIRST — the final edits below can take
+    // seconds (edit throttle / flood backoff), and a new cycle may be created
+    // in that window; events must never reach the retiring cycle again.
     if (this.cycles.get(cycle.chatKey) === cycle) this.cycles.delete(cycle.chatKey);
+    cycle.unsubscribe();
     cycle.pendingText = text;
     const updater = cycle.updater;
     if (updater) {
@@ -422,7 +433,6 @@ export class BridgeRuntime {
       // a fresh message instead of dropping the run's reply.
       await this.safeSendText(cycle.chat, text);
     }
-    cycle.unsubscribe();
   }
 
   private teardownCycle(cycle: ReplyCycle): void {
@@ -433,6 +443,24 @@ export class BridgeRuntime {
 
   private activeSessionMessages(chatKey: string): UIMessage[] {
     return (this.activeSessions.get(chatKey)?.getSnapshot().messages ?? []) as UIMessage[];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cross-cycle interaction dedup (explicit FIFO per repo cache convention)
+  // ---------------------------------------------------------------------------
+
+  private readonly postedInteractionIds = new Set<string>();
+  private readonly postedInteractionOrder: string[] = [];
+  private static readonly POSTED_INTERACTIONS_CAP = 300;
+
+  private rememberPostedInteraction(id: string): void {
+    if (this.postedInteractionIds.has(id)) return;
+    this.postedInteractionIds.add(id);
+    this.postedInteractionOrder.push(id);
+    while (this.postedInteractionOrder.length > BridgeRuntime.POSTED_INTERACTIONS_CAP) {
+      const oldest = this.postedInteractionOrder.shift();
+      if (oldest !== undefined) this.postedInteractionIds.delete(oldest);
+    }
   }
 
   // ---------------------------------------------------------------------------
