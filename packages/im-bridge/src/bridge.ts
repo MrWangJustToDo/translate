@@ -3,10 +3,11 @@
  *
  * Inbound:  message → allowlist → session resolver → dispatch send/steer
  *           (steer while the agent pump is running, send when idle).
- * Outbound: subscribe messages/state per reply cycle → renderReply →
- *           StreamUpdater edits the placeholder in place; pending ask_user /
- *           approval interactions render as buttons backed by
- *           PendingInteractionStore (TTL auto-deny).
+ * Outbound: subscribe messages/state per reply cycle → renderRunToolLines →
+ *           StreamUpdater edits the progress row in place; the answer is sent
+ *           fresh once the run finishes; pending ask_user / approval
+ *           interactions render as buttons backed by PendingInteractionStore
+ *           (TTL auto-deny).
  *
  * The runtime is transport-agnostic: adapters translate platforms, the runtime
  * owns orchestration. Sessions are remote (`createRemoteAgentSessionHost`) by
@@ -18,7 +19,13 @@ import { createRemoteAgentSessionHost } from "@my-agent/server/client";
 
 import { AccessControl } from "./access.js";
 import { decodeButtonPayload, PendingInteractionStore, type PendingRecord } from "./interaction/pending.js";
-import { renderReply, renderResolved, renderRunAnswer, renderRunToolLines } from "./interaction/render.js";
+import {
+  currentRunMessages,
+  renderResolved,
+  renderRunAnswer,
+  renderRunToolLines,
+  scanPendingInteractions,
+} from "./interaction/render.js";
 import { createLocalSessionHost } from "./local-host.js";
 import { SessionResolver, sessionKeyOf } from "./session-resolver.js";
 import { splitMessage } from "./streaming/splitter.js";
@@ -274,10 +281,9 @@ export class BridgeRuntime {
     // "typing…" during thinking/tool phases instead of looking dead.
     if (this.adapter.setTyping) {
       cycle.typingTimer = setInterval(() => {
-        // Stream mode: typing stops once the reply starts editing in place.
-        // No-stream mode: typing runs for the whole run (nothing answers until
+        // No-stream: typing runs for the whole run (nothing answers until
         // the final message lands).
-        if (cycle.closed || (this.config.streamReply && cycle.updater?.hasEdited)) {
+        if (cycle.closed) {
           if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
           cycle.typingTimer = null;
           return;
@@ -337,9 +343,9 @@ export class BridgeRuntime {
 
   private renderCycle(cycle: ReplyCycle, messages: UIMessage[]): void {
     if (cycle.closed) return;
-    const rendered = renderReply(messages);
-    for (const pending of rendered.pending) {
-      const id = pending.kind === "approval" ? pending.approvalId : pending.toolCallId;
+    const pending = scanPendingInteractions(currentRunMessages(messages));
+    for (const interaction of pending) {
+      const id = interaction.kind === "approval" ? interaction.approvalId : interaction.toolCallId;
       if (cycle.registered.has(id)) continue;
       cycle.registered.add(id);
       // Cross-cycle dedup: during a retire/recreate window two cycles can both
@@ -349,11 +355,11 @@ export class BridgeRuntime {
       this.rememberPostedInteraction(id);
       // One dedicated message per interaction — buttons never mix across
       // approvals/ask_user on a shared streaming message.
-      void this.postInteractionMessage(cycle, pending);
+      void this.postInteractionMessage(cycle, interaction);
     }
-    // The streaming message: full reply in stream mode, tool progress lines only
-    // in no-stream mode (the answer is delivered fresh once the run completes).
-    const progress = this.config.streamReply ? rendered.text : renderRunToolLines(messages);
+    // The progress row: tool status lines only — the answer is delivered
+    // fresh (complete) once the run finishes.
+    const progress = renderRunToolLines(messages);
     if (cycle.updater) cycle.updater.update(progress);
     else cycle.pendingText = progress;
   }
@@ -406,12 +412,7 @@ export class BridgeRuntime {
     const status = this.activeSessions.get(cycle.chatKey)?.getSnapshot().status ?? "idle";
     if (isActiveStatus(status)) return;
     const messages = this.activeSessionMessages(cycle.chatKey);
-    if (this.config.streamReply) {
-      await this.retireCycle(cycle, renderReply(messages).text || "✅ done");
-    } else {
-      const answer = renderRunAnswer(messages);
-      await this.retireCycle(cycle, renderRunToolLines(messages), answer || "✅ done");
-    }
+    await this.retireCycle(cycle, renderRunToolLines(messages), renderRunAnswer(messages) || "✅ done");
   }
 
   /**
