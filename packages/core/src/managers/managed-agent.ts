@@ -383,7 +383,7 @@ export class ManagedAgent {
     this.managedToolsProvider = () => this.tools;
     this.statusController = createAgentStatusController({
       getStatus: () => this.status,
-      setStatus: (status) => this.setStatus(status),
+      setStatus: (status, trigger) => this.setStatus(status, trigger),
       getError: () => this.error,
       setError: (error) => this.setError(error),
       setPendingApprovalCount: (count) => this.setPendingApprovalCount(count),
@@ -1331,7 +1331,7 @@ export class ManagedAgent {
       {
         id: this.id,
         status: this.status,
-        setStatus: (status) => this.setStatus(status),
+        setStatus: (status, trigger) => this.setStatus(status, trigger ?? "manual-compact"),
         ui: this.ui,
         usage: this.usage,
         todoManager: this.todoManager,

@@ -111,7 +111,7 @@ export async function handleManagedReactiveCompact(
 export interface ManualCompactHost {
   id: string;
   status: AgentStatus;
-  setStatus: (status: AgentStatus) => void;
+  setStatus: (status: AgentStatus, trigger?: string) => void;
   ui?: AgentUIChannel;
   usage: UsageTracker;
   todoManager: TodoManager | null;

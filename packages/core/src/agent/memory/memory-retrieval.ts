@@ -106,7 +106,6 @@ function filterExpired(memories: Memory[], logger?: AgentLog): Memory[] {
       const t = Date.parse(m.expiresAt);
       if (Number.isNaN(t) || t <= now) {
         expired++;
-        logger?.debug("memory", `Skipping expired memory ${m.filename} (expiresAt=${m.expiresAt})`);
         continue;
       }
     }
@@ -194,7 +193,6 @@ async function selectWithLLM(
     const parsed = JSON.parse(match[0]) as { selected_memories?: unknown };
     if (Array.isArray(parsed.selected_memories)) {
       const filenames = parsed.selected_memories.filter((f: unknown): f is string => typeof f === "string");
-      logger?.debug("memory", "LLM selected memories", { count: filenames.length, filenames });
       return filenames;
     }
     logger?.warn("memory", "LLM selection response missing selected_memories array", { parsed });
@@ -311,22 +309,13 @@ export async function findRelevantMemories(
   } = options;
 
   const allMemories = await memoryManager.listMemories();
-  logger?.debug("memory", `Found ${allMemories.length} total memories`);
 
   // Drop expired memories (expiresAt in the past) before any selection work.
   const live = filterExpired(allMemories, logger);
-  if (live.length !== allMemories.length) {
-    logger?.debug("memory", `Filtered ${allMemories.length - live.length} expired memories`);
-  }
 
   // Pre-filter already-surfaced before LLM call (don't waste slots on repeats)
   const candidates = live.filter((m) => !alreadySurfaced.has(m.filename));
-  logger?.debug(
-    "memory",
-    `After filtering already-surfaced (${alreadySurfaced.size}): ${candidates.length} candidates`
-  );
   if (candidates.length === 0) {
-    logger?.debug("memory", "No candidate memories available, skipping selection");
     return [];
   }
 
@@ -343,7 +332,6 @@ export async function findRelevantMemories(
         selectedFilenames = selectWithKeywords(query, candidates, maxItems);
         if (selectedFilenames.length > 0) {
           selectionMethod = "keyword-fallback";
-          logger?.debug("memory", "LLM returned empty selection, keyword fallback found matches");
         }
       }
     } catch (err) {
@@ -354,15 +342,9 @@ export async function findRelevantMemories(
     }
   } else {
     selectedFilenames = selectWithKeywords(query, candidates, maxItems);
-    logger?.debug("memory", "No text adapter available, using keyword selection");
   }
 
-  logger?.debug("memory", `Selection method: ${selectionMethod}, selected ${selectedFilenames.length} memories`, {
-    selectedFilenames,
-  });
-
   if (selectedFilenames.length === 0) {
-    logger?.debug("memory", "No memories selected by selection process");
     return [];
   }
 
@@ -384,10 +366,6 @@ export async function findRelevantMemories(
     const fallback = selectWithKeywords(query, candidates, maxItems);
     if (fallback.length > 0) {
       selectionMethod = "keyword-fallback";
-      logger?.debug("memory", "LLM selection resolved to 0 files, keyword fallback found matches", {
-        rawSelected: selectedFilenames,
-        fallback,
-      });
       resolved = [];
       for (const filename of fallback) {
         const mem = candidateMap.get(filename);
@@ -405,10 +383,6 @@ export async function findRelevantMemories(
 
     // Enforce session-level budget
     if (totalBytes + contentBytes > maxSessionBytes) {
-      logger?.debug(
-        "memory",
-        `Budget limit reached after ${results.length} memories (${totalBytes}/${maxSessionBytes} bytes)`
-      );
       break;
     }
     totalBytes += contentBytes;
