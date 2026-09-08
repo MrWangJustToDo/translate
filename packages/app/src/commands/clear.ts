@@ -1,7 +1,6 @@
 import { bumpAgentUsage } from "../hooks/use-agent-usage.js";
 import { useDiffFileCache } from "../hooks/use-diff-file-cache.js";
 import { useDynamic } from "../hooks/use-dynamic.js";
-import { useTodoManager } from "../hooks/use-todo-manager.js";
 import { clearFlatMessageCache } from "../utils/message-flat-cache.js";
 
 import { registerCommand } from "./utils/registry.js";
@@ -24,7 +23,6 @@ registerCommand({
     }
 
     bumpAgentUsage();
-    useTodoManager.getActions().clear();
     useDiffFileCache.getActions().clear();
     clearFlatMessageCache();
 

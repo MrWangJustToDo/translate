@@ -1,17 +1,14 @@
-import { clearAdapterHooks, createAgentFromConfig } from "@my-agent/app";
+import { clearAgentStore, createAgentFromConfig } from "@my-agent/app";
 import { agentManager, createLocalAgentSessionHost } from "@my-agent/core";
 
-import type { AdapterHooks, AgentAdapter, AppConfig, ClipboardImageResult, InitResult } from "@my-agent/app";
+import type { AgentAdapter, AppConfig, ClipboardImageResult, InitResult } from "@my-agent/app";
 import type { AgentSessionHost } from "@my-agent/core";
 
 export class PlaygroundAgentAdapter implements AgentAdapter {
   private host: AgentSessionHost | null = null;
   private agentId: string | null = null;
-  private _hooks: AdapterHooks;
 
-  constructor(options: { hooks: AdapterHooks }) {
-    this._hooks = options.hooks;
-  }
+  constructor() {}
 
   async initialize(config: AppConfig): Promise<InitResult> {
     // Session plane: remote HTTP host when configured, else the in-browser
@@ -19,7 +16,7 @@ export class PlaygroundAgentAdapter implements AgentAdapter {
     const host = config.remoteSession
       ? (await import("@my-agent/server/client")).createRemoteAgentSessionHost({ baseUrl: config.remoteSession })
       : createLocalAgentSessionHost({ manager: agentManager });
-    const result = await createAgentFromConfig({ config, name: "playground-chat", hooks: this._hooks, host });
+    const result = await createAgentFromConfig({ config, name: "playground-chat", host });
     this.host = host;
     this.agentId = result.session.id;
     return result;
@@ -31,7 +28,7 @@ export class PlaygroundAgentAdapter implements AgentAdapter {
       this.host = null;
       this.agentId = null;
     }
-    clearAdapterHooks(this._hooks);
+    clearAgentStore();
   }
 
   exit(): void {

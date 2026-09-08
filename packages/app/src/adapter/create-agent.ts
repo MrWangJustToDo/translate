@@ -12,38 +12,27 @@
 import { buildDefaultSystemPrompt, resolveModelConfigFromProvider } from "@my-agent/core";
 
 import { clearExtensionCommands, syncExtensionCommands } from "../commands";
+import { useAgent } from "../hooks/use-agent.js";
 import { useConfig } from "../hooks/use-config.js";
 
 import type { AppConfig, InitResult } from "./types.js";
-import type { useAgent as useAgentType } from "../hooks/use-agent.js";
-import type { useTodoManager as useTodoManagerType } from "../hooks/use-todo-manager.js";
 import type { AgentSession, AgentSessionHost } from "@my-agent/core";
 
 /** Wire AgentSession (+ Host) into the app store. */
-export function bindAgentSession(
-  session: AgentSession | null,
-  hooks: Pick<AdapterHooks, "useAgent">,
-  host?: AgentSessionHost | null
-): void {
+export function bindAgentSession(session: AgentSession | null, host?: AgentSessionHost | null): void {
   if (session) {
-    hooks.useAgent.getActions().registerSession(session, { activate: true });
+    useAgent.getActions().registerSession(session, { activate: true });
   } else {
-    hooks.useAgent.getActions().setSession(null);
+    useAgent.getActions().setSession(null);
   }
   if (host !== undefined) {
-    hooks.useAgent.getActions().setHost(host);
+    useAgent.getActions().setHost(host);
   }
-}
-
-export interface AdapterHooks {
-  useAgent: typeof useAgentType;
-  useTodoManager: typeof useTodoManagerType;
 }
 
 export interface CreateAgentOptions {
   config: AppConfig;
   name: string;
-  hooks: AdapterHooks;
   /**
    * Session plane owner, constructed by the host process (required).
    * Local: `createLocalAgentSessionHost({ manager: agentManager })`.
@@ -52,7 +41,7 @@ export interface CreateAgentOptions {
   host: AgentSessionHost;
 }
 
-export async function createAgentFromConfig({ config, name, hooks, host }: CreateAgentOptions): Promise<InitResult> {
+export async function createAgentFromConfig({ config, name, host }: CreateAgentOptions): Promise<InitResult> {
   const { connection, modelInfo, providerMode } = await resolveModelConfigFromProvider({
     model: config.model,
     style: config.style,
@@ -94,7 +83,6 @@ export async function createAgentFromConfig({ config, name, hooks, host }: Creat
     ...(config.toolConfig ? { toolConfig: config.toolConfig } : {}),
   });
 
-  const { useAgent, useTodoManager } = hooks;
   const snap = session.getSnapshot();
   const initial = initialMessages ?? [];
 
@@ -116,7 +104,6 @@ export async function createAgentFromConfig({ config, name, hooks, host }: Creat
   // The caller registers after its initId guard, so a stale init's session never
   // enters the store.
   useAgent.getActions().setHost(host);
-  useTodoManager.getActions().setFromSession(snap.todos, snap.todosTitle);
   syncExtensionCommands(session);
 
   return { host, session, ...(initial.length ? { initialMessages: initial } : {}) };
@@ -129,15 +116,7 @@ let sessionCounter = 0;
  * resolved model config from {@link useConfig} (the bootstrap session's provider
  * resolution). Registers and activates it in the app store.
  */
-export async function createSessionOnHost({
-  host,
-  hooks,
-  name,
-}: {
-  host: AgentSessionHost;
-  hooks: AdapterHooks;
-  name?: string;
-}): Promise<InitResult> {
+export async function createSessionOnHost({ host, name }: { host: AgentSessionHost; name?: string }): Promise<InitResult> {
   const config = { ...useConfig.getReadonlyState().config } as AppConfig;
 
   const { session, initialMessages } = await host.create({
@@ -154,20 +133,15 @@ export async function createSessionOnHost({
     ...(config.toolConfig ? { toolConfig: config.toolConfig } : {}),
   });
 
-  const { useAgent, useTodoManager } = hooks;
-  const snap = session.getSnapshot();
-  const initial = initialMessages ?? [];
-
   useAgent.getActions().registerSession(session, { activate: true });
-  useTodoManager.getActions().setFromSession(snap.todos, snap.todosTitle);
   syncExtensionCommands(session);
 
+  const initial = initialMessages ?? [];
   return { host, session, ...(initial.length ? { initialMessages: initial } : {}) };
 }
 
-export function clearAdapterHooks(hooks: AdapterHooks): void {
+export function clearAgentStore(): void {
   clearExtensionCommands();
-  hooks.useAgent.getActions().setHost(null);
-  hooks.useAgent.getActions().setSession(null);
-  hooks.useTodoManager.getActions().clear();
+  useAgent.getActions().setHost(null);
+  useAgent.getActions().setSession(null);
 }

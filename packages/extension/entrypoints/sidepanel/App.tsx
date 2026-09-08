@@ -5,7 +5,6 @@ import {
   initConfig,
   initHighlighter,
   useAgent,
-  useTodoManager,
 } from "@my-agent/app";
 import {
   clearCoreEnv,
@@ -80,9 +79,7 @@ const AgentBootstrap = () => {
       await initHighlighter();
       if (currentInitId !== initIdRef.current) return;
 
-      const ext = new ExtensionAgentAdapter({
-        hooks: { useAgent, useTodoManager },
-      });
+      const ext = new ExtensionAgentAdapter();
 
       adapterRef.current = ext;
       setAdapter(ext);

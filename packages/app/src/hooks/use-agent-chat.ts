@@ -16,7 +16,6 @@ import { useCallbackRef } from "./use-callback-ref.js";
 import { useConfig } from "./use-config.js";
 import { useForceUpdate } from "./use-force-update.js";
 import { useThinkingLine } from "./use-thinking-line.js";
-import { useTodoManager } from "./use-todo-manager.js";
 import { getWorkSpaceInfo } from "./use-workspace-info.js";
 
 import type { AppConfig } from "../adapter/types.js";
@@ -168,7 +167,7 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
         const result = await adapter.initialize(config);
         if (currentInitId !== initIdRef.current) return;
 
-        bindAgentSession(result.session, { useAgent }, result.host);
+        bindAgentSession(result.session, result.host);
         // Snapshot population (messages/status/queues/todos) is NOT done here.
         // bindAgentSession activates the new session, which flips `session` and
         // triggers the session-switch effect below to repopulate UI state from its
@@ -190,7 +189,7 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
     void init();
 
     return () => {
-      bindAgentSession(null, { useAgent }, null);
+      bindAgentSession(null, null);
       void adapter.destroy();
     };
     // Deliberately NOT depending on config.model/baseURL/style/apiKey (or the whole
@@ -215,7 +214,6 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
     setAgentError(snap.error);
     useAgentStatus.getActions().setStatus(snap.status);
     setQueuedMessages(snap.queues);
-    useTodoManager.getActions().setFromSession(snap.todos, snap.todosTitle);
 
     // Resume-session linkage: if the restored session was using a model that the
     // loaded models.json knows about, re-dispatch model.set so the live agent
@@ -257,7 +255,7 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
           return;
         }
         if (event.channel === "todos") {
-          useTodoManager.getActions().setFromSession(event.payload.items, event.payload.title);
+          // No store projection — Footer subscribes to the session `todos` channel directly.
           return;
         }
         if (event.channel === "lifecycle") {

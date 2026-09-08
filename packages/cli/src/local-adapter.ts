@@ -1,22 +1,19 @@
 import { agentManager, createLocalAgentSessionHost } from "@my-agent/core";
 
-import type { AdapterHooks, AgentAdapter, AppConfig, ClipboardImageResult, InitResult } from "@my-agent/app";
+import type { AgentAdapter, AppConfig, ClipboardImageResult, InitResult } from "@my-agent/app";
 import type { AgentSessionHost } from "@my-agent/core";
 
 export class LocalAgentAdapter implements AgentAdapter {
   private host: AgentSessionHost | null = null;
   private _exit: () => void;
   private _readClipboardImage: (() => Promise<ClipboardImageResult | null>) | null;
-  private _hooks: AdapterHooks;
 
   constructor(options: {
     exit: () => void;
     readClipboardImage?: () => Promise<ClipboardImageResult | null>;
-    hooks: AdapterHooks;
   }) {
     this._exit = options.exit;
     this._readClipboardImage = options.readClipboardImage ?? null;
-    this._hooks = options.hooks;
   }
 
   async initialize(config: AppConfig): Promise<InitResult> {
@@ -26,7 +23,7 @@ export class LocalAgentAdapter implements AgentAdapter {
     const host = config.remoteSession
       ? (await import("@my-agent/server/client")).createRemoteAgentSessionHost({ baseUrl: config.remoteSession })
       : createLocalAgentSessionHost({ manager: agentManager });
-    const result = await createAgentFromConfig({ config, name: "local-chat", hooks: this._hooks, host });
+    const result = await createAgentFromConfig({ config, name: "local-chat", host });
     this.host = host;
     return result;
   }
@@ -43,8 +40,8 @@ export class LocalAgentAdapter implements AgentAdapter {
       }
       this.host = null;
     }
-    const { clearAdapterHooks } = await import("@my-agent/app");
-    clearAdapterHooks(this._hooks);
+    const { clearAgentStore } = await import("@my-agent/app");
+    clearAgentStore();
   }
 
   exit(): void {

@@ -1,17 +1,12 @@
-import { clearAdapterHooks, createAgentFromConfig } from "@my-agent/app";
+import { clearAgentStore, createAgentFromConfig } from "@my-agent/app";
 import { agentManager, createLocalAgentSessionHost } from "@my-agent/core";
 
-import type { AdapterHooks, AgentAdapter, AppConfig, ClipboardImageResult, InitResult } from "@my-agent/app";
+import type { AgentAdapter, AppConfig, ClipboardImageResult, InitResult } from "@my-agent/app";
 import type { AgentSessionHost } from "@my-agent/core";
 
 export class ExtensionAgentAdapter implements AgentAdapter {
   private host: AgentSessionHost | null = null;
   private agentId: string | null = null;
-  private _hooks: AdapterHooks;
-
-  constructor(options: { hooks: AdapterHooks }) {
-    this._hooks = options.hooks;
-  }
 
   async initialize(config: AppConfig): Promise<InitResult> {
     // Session plane: remote HTTP host when configured, else the in-page local
@@ -19,7 +14,7 @@ export class ExtensionAgentAdapter implements AgentAdapter {
     const host = config.remoteSession
       ? (await import("@my-agent/server/client")).createRemoteAgentSessionHost({ baseUrl: config.remoteSession })
       : createLocalAgentSessionHost({ manager: agentManager });
-    const result = await createAgentFromConfig({ config, name: "extension-chat", hooks: this._hooks, host });
+    const result = await createAgentFromConfig({ config, name: "extension-chat", host });
     this.host = host;
     this.agentId = result.session.id;
     return result;
@@ -31,7 +26,7 @@ export class ExtensionAgentAdapter implements AgentAdapter {
       this.host = null;
       this.agentId = null;
     }
-    clearAdapterHooks(this._hooks);
+    clearAgentStore();
   }
 
   exit(): void {

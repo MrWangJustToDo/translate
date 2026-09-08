@@ -1,4 +1,3 @@
-import { useTodoManager } from "../hooks/use-todo-manager.js";
 import { getActiveSession } from "../utils/session-resolve.js";
 import { isPendingToolApproval, isToolCallPart } from "../utils/tool-part.js";
 
@@ -165,7 +164,11 @@ registerCommand({
     if (head === "status") {
       if (mode === "plan") {
         const state = session.getSnapshot().plan;
-        const stats = useTodoManager.getReadonlyState().stats;
+        // Todo progress straight from the session snapshot (no store projection).
+        const todos = session.getSnapshot().todos ?? [];
+        let completed = 0;
+        for (const item of todos) if (item.status === "completed") completed += 1;
+        const stats = { total: todos.length, completed };
         const displayPhase =
           state.phase === "ready"
             ? "review"

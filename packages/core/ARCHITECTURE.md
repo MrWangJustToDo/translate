@@ -78,7 +78,7 @@ packages/app/src/adapter/create-agent.ts
   resolveModelConfigFromProvider({ model, style, baseURL, apiKey })
     // merges ModelProvider (remote forces baseURL/apiKey)
   agentManager.createManagedAgent({ modelInfo, modelStyle, ... })
-  wire React stores (useAgent, useTodoManager)
+  wire React stores (useAgent)
   optional: continueLatestSession() / resumeSession() → initialMessages
 ```
 
