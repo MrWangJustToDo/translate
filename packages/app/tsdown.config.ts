@@ -4,6 +4,8 @@ export default defineConfig([
   {
     entry: [
       "src/index.ts",
+      "src/utils/lite-diff.ts",
+      "src/utils/lite-diff-highlight.ts",
       "src/utils/input-feedback-queue.ts",
       "src/utils/workspace-scroll.ts",
       "src/utils/workspace-git-diff.ts",
@@ -41,6 +43,8 @@ export default defineConfig([
         "@git-diff-view/cli",
         "@git-diff-view/file",
         "@git-diff-view/core",
+        "@git-diff-view/lowlight",
+        "diff",
         "@m234/nerd-fonts",
       ],
     },

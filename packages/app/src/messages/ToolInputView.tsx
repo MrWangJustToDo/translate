@@ -49,7 +49,6 @@ export const ToolInputView = ({
 
     return (
       <MessageDiffView
-        diffId={part.id}
         width={bodyWidth}
         oldPath=""
         oldFile=""
@@ -72,7 +71,6 @@ export const ToolInputView = ({
       return (
         <EditFilePreview
           toolCallId={part.id}
-          _approvalId={part.approval?.id}
           path={content.path}
           edits={content.edits}
           bodyWidth={bodyWidth}

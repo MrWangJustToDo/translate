@@ -27,13 +27,11 @@ import { MessageDiffView } from "./MessageDiffView.js";
  */
 export const EditFilePreview = memo(function EditFilePreview({
   toolCallId,
-  _approvalId,
   path,
   edits,
   output,
 }: {
   toolCallId: string;
-  _approvalId?: string;
   path: string;
   edits: Array<{ oldString: string; newString: string; startLine?: number; replaceAll?: boolean }>;
   bodyWidth: number;
@@ -57,21 +55,13 @@ export const EditFilePreview = memo(function EditFilePreview({
     <Box flexDirection="column">
       {hasFullPreview ? (
         /* Full-file diff: original file → file after all edits applied */
-        <MessageDiffView
-          diffId={toolCallId + "-full"}
-          width={width}
-          oldPath={path}
-          oldFile={oldFile}
-          newPath={path}
-          newFile={newFile}
-        />
+        <MessageDiffView width={width} oldPath={path} oldFile={oldFile} newPath={path} newFile={newFile} />
       ) : (
         /* Fallback: per-edit fragment diffs when full-file preview is unavailable */
         edits.map((edit, i) => (
           <Fragment key={i}>
             {edit.oldString !== edit.newString && (
               <MessageDiffView
-                diffId={`${toolCallId}-edit-${i}`}
                 width={width}
                 oldPath={path}
                 oldFile={edit.oldString}
