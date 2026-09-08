@@ -14,6 +14,47 @@ function parseToolResultContent(content: string): unknown {
  * Fold standalone `tool-result` parts into their matching `tool-call` and drop the result row.
  * TanStack often emits both; UI only renders tool-call rows.
  */
+// TanStack keeps `tool-result` parts in raw messages, so the `hasToolResult` fast
+// path misses on every stream tick and the map below would clone every assistant
+// part ~16×/s (allocation churn → GC pauses). StreamProcessor updates messages
+// immutably, so completed messages keep object identity — memoize by reference.
+// Explicit FIFO eviction (insertion-order delete of the oldest key).
+const NORMALIZE_MEMO_LIMIT = 600;
+const normalizeMemo = new Map<UIMessage, UIMessage>();
+
+function normalizeMessage(message: UIMessage): UIMessage {
+  const parts = message.parts.map((part) => ({ ...part }));
+  const callIndexById = new Map<string, number>();
+
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i].type === "tool-call") {
+      callIndexById.set((parts[i] as ToolCallPart).id, i);
+    }
+  }
+
+  const remove = new Set<number>();
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part.type !== "tool-result") continue;
+
+    const callIdx = callIndexById.get(part.toolCallId);
+    if (callIdx === undefined) continue;
+
+    const callPart = parts[callIdx] as ToolCallPart;
+    if (callPart.output === undefined) {
+      parts[callIdx] = {
+        ...callPart,
+        state: part.state === "error" ? "error" : "complete",
+        output: parseToolResultContent(part.content as any),
+      };
+    }
+    remove.add(i);
+  }
+
+  if (remove.size === 0) return message;
+  return { ...message, parts: parts.filter((_, idx) => !remove.has(idx)) };
+}
+
 export function normalizeToolPartsInMessages(messages: UIMessage[]): UIMessage[] {
   let hasToolResult = false;
   for (const message of messages) {
@@ -24,42 +65,22 @@ export function normalizeToolPartsInMessages(messages: UIMessage[]): UIMessage[]
   }
   if (!hasToolResult) return messages;
 
-  return messages
-    .map((message) => {
-      if (message.role !== "assistant") return message;
+  const result = messages.map((message) => {
+    if (message.role !== "assistant") return message;
 
-      const parts = message.parts.map((part) => ({ ...part }));
-      const callIndexById = new Map<string, number>();
+    const cached = normalizeMemo.get(message);
+    if (cached) return cached;
 
-      for (let i = 0; i < parts.length; i++) {
-        if (parts[i].type === "tool-call") {
-          callIndexById.set((parts[i] as ToolCallPart).id, i);
-        }
-      }
+    const normalized = normalizeMessage(message);
+    normalizeMemo.set(message, normalized);
+    if (normalizeMemo.size > NORMALIZE_MEMO_LIMIT) {
+      const oldest = normalizeMemo.keys().next().value;
+      if (oldest !== undefined) normalizeMemo.delete(oldest);
+    }
+    return normalized;
+  });
 
-      const remove = new Set<number>();
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        if (part.type !== "tool-result") continue;
-
-        const callIdx = callIndexById.get(part.toolCallId);
-        if (callIdx === undefined) continue;
-
-        const callPart = parts[callIdx] as ToolCallPart;
-        if (callPart.output === undefined) {
-          parts[callIdx] = {
-            ...callPart,
-            state: part.state === "error" ? "error" : "complete",
-            output: parseToolResultContent(part.content as any),
-          };
-        }
-        remove.add(i);
-      }
-
-      if (remove.size === 0) return message;
-      return { ...message, parts: parts.filter((_, idx) => !remove.has(idx)) };
-    })
-    .filter((message) => message.parts.length > 0);
+  return result.filter((message) => message.parts.length > 0);
 }
 
 export function shouldFlattenPart(part: { type?: string }): boolean {

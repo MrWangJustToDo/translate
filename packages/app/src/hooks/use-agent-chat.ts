@@ -290,8 +290,18 @@ export function useAgentChat(config: AppConfig): UseAgentChatReturn {
         if (part.type === "thinking") {
           const content = part.content ?? "";
           if (content.length > 0) {
-            const lines = content.split("\n").filter((l) => l.trim().length > 0);
-            latestThinking = lines.length > 0 ? lines[lines.length - 1] : "";
+            // The thinking content streams and grows every tick; splitting the
+            // full string each time is O(content). The last non-empty line can
+            // only come from the tail — scan a bounded suffix and fall back to
+            // a full split only when the tail is entirely blank.
+            const tail = content.length > 500 ? content.slice(-500) : content;
+            const lines = tail.split("\n").filter((l) => l.trim().length > 0);
+            if (lines.length > 0) {
+              latestThinking = lines[lines.length - 1];
+            } else if (tail.length < content.length) {
+              const allLines = content.split("\n").filter((l) => l.trim().length > 0);
+              latestThinking = allLines.length > 0 ? allLines[allLines.length - 1] : "";
+            }
           }
           break;
         }

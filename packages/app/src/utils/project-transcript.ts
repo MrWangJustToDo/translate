@@ -157,17 +157,38 @@ function collapseTurn(turn: Turn): UIMessage[] {
  * exploration tools collapse into path-aware activity summaries; errored tool
  * rows fold into those summaries as an error count.
  */
+// Memo storage for {@link projectTranscriptForDisplay} — one entry per display
+// mode (bounded set of modes), compared by message reference identity.
+const PROJECTION_MEMO_LIMIT = 4;
+const projectionMemo = new Map<TranscriptDisplayMode, { refs: UIMessage[]; projected: UIMessage[] }>();
+
 export function projectTranscriptForDisplay(
   messages: UIMessage[],
   options: { mode: TranscriptDisplayMode }
 ): UIMessage[] {
   if (options.mode !== "compact" || messages.length === 0) return messages;
 
+  // Memoize by element reference identity: the input is the static (non-streaming)
+  // portion, whose message objects keep identity across stream ticks. Falls back
+  // to recompute whenever any message is rebuilt (covers tool-state changes in
+  // the static portion too, since those arrive as new message objects).
+  // Explicit FIFO eviction (insertion-order delete of the oldest key).
+  const cached = projectionMemo.get(options.mode);
+  if (cached && cached.refs.length === messages.length && cached.refs.every((ref, i) => ref === messages[i])) {
+    return cached.projected;
+  }
+
   const turns = groupTurns(messages);
   const result: UIMessage[] = [];
 
   for (const turn of turns) {
     result.push(...collapseTurn(turn));
+  }
+
+  projectionMemo.set(options.mode, { refs: messages.slice(), projected: result });
+  if (projectionMemo.size > PROJECTION_MEMO_LIMIT) {
+    const oldest = projectionMemo.keys().next().value;
+    if (oldest !== undefined) projectionMemo.delete(oldest);
   }
 
   return result;
