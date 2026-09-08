@@ -100,21 +100,27 @@ export const LiteDiff = memo(function LiteDiff({
         }
         // Pad to the full row width so the add/del background spans edge to edge.
         const fill = " ".repeat(Math.max(0, width - gutterWidth - shownLength));
+        // Nested <Text> does NOT inherit the outer row <Text>'s background —
+        // backgroundContext comes only from Boxes — so pass the row bg down
+        // explicitly, otherwise gutter/highlight spans would show the parent
+        // HalfLinePaddedBox background instead of the diff color.
         return (
           <Text key={i} backgroundColor={bg}>
-            <Text color={COLORS.muted} dimColor>
+            <Text color={COLORS.muted} dimColor backgroundColor={bg}>
               {`${padNum(row.oldLine, numWidth)} ${padNum(row.newLine, numWidth)} ${marker} `}
             </Text>
             {segments ? (
               clipped.map((seg, si) =>
                 seg.text ? (
-                  <Text key={si} color={syntaxColorForClasses(seg.classes)}>
+                  <Text key={si} color={syntaxColorForClasses(seg.classes)} backgroundColor={bg}>
                     {seg.text}
                   </Text>
                 ) : null
               )
             ) : (
-              <Text color={COLORS.text}>{plain}</Text>
+              <Text color={COLORS.text} backgroundColor={bg}>
+                {plain}
+              </Text>
             )}
             {fill}
           </Text>
