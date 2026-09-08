@@ -55,6 +55,10 @@ interface ReplyCycle {
   thinkingUpdater: StreamUpdater | null;
   thinkingFrame: number;
   thinkingDone: boolean;
+  /** Whether any thinking content was seen this cycle (controls the done label / cleanup). */
+  sawThinking: boolean;
+  /** Latest composed preview while the thinking row's sendText is in flight. */
+  latestThinkingText: string;
   /** Interaction ids already registered as buttons on this cycle. */
   registered: Set<string>;
 }
@@ -275,6 +279,8 @@ export class BridgeRuntime {
       thinkingUpdater: null,
       thinkingFrame: 0,
       thinkingDone: false,
+      sawThinking: false,
+      latestThinkingText: "",
       registered: new Set(),
     };
     this.cycles.set(chatKey, cycle);
@@ -291,6 +297,33 @@ export class BridgeRuntime {
         void this.adapter.setTyping?.(cycle.chat).catch(() => {});
       }, 4_000);
     }
+    // Thinking row FIRST (Telegram orders by send call) so the answer always
+    // lands BELOW it. Eagerly created exactly once per cycle — lazy creation
+    // raced with the message-event flood and spawned a dozen rows.
+    void this.adapter
+      .sendText(msg.chat, "💭 思考中…")
+      .then((ref) => {
+        const updater = new StreamUpdater({
+          adapter: this.adapter,
+          reply: ref,
+          editIntervalMs: this.config.editIntervalMs,
+          onError: this.onError,
+        });
+        cycle.thinkingUpdater = updater;
+        if (cycle.closed || cycle.thinkingDone) {
+          // The run finished while this row's sendText was in flight — apply
+          // the cleanup now that the row actually exists.
+          if (!cycle.sawThinking && this.adapter.deleteMessage) {
+            void this.adapter.deleteMessage(cycle.chat, updater.messageId).catch((error) => this.onError(error));
+          } else {
+            updater.update("💭 思考完成");
+            void updater.finalize().catch(() => {});
+          }
+        } else if (cycle.latestThinkingText) {
+          updater.update(cycle.latestThinkingText);
+        }
+      })
+      .catch((error) => this.onError(error));
     void this.adapter
       .sendText(msg.chat, "⏳")
       .then((reply) => {
@@ -366,44 +399,31 @@ export class BridgeRuntime {
   private updateThinkingPreview(cycle: ReplyCycle, rendered: { text: string; thinking: string }): void {
     if (cycle.thinkingDone) return;
     if (!rendered.thinking) {
-      // Answer text (or tool lines) started — or thinking hasn't begun. If a
-      // preview row exists, close it; if thinking shows up later mid-run
-      // (post-steer continuation) a fresh row can still open.
-      if (cycle.thinkingUpdater && rendered.text) this.finishThinkingPreview(cycle);
+      // Answer text started — close the row. If no thinking was ever seen the
+      // row is removed entirely (transient placeholder) instead of lingering.
+      if (rendered.text) this.finishThinkingPreview(cycle);
       return;
     }
+    cycle.sawThinking = true;
     const frame = SPINNER_FRAMES[cycle.thinkingFrame % SPINNER_FRAMES.length];
     cycle.thinkingFrame += 1;
     const preview = `${frame} 思考中 · ${rendered.thinking.slice(0, 100)}`;
-    if (cycle.thinkingUpdater) {
-      cycle.thinkingUpdater.update(preview);
-      return;
-    }
-    void this.adapter
-      .sendText(cycle.chat, preview)
-      .then((ref) => {
-        const updater = new StreamUpdater({
-          adapter: this.adapter,
-          reply: ref,
-          editIntervalMs: this.config.editIntervalMs,
-          onError: this.onError,
-        });
-        cycle.thinkingUpdater = updater;
-        if (cycle.closed || cycle.thinkingDone) {
-          updater.update("💭 思考完成");
-          void updater.finalize().catch(() => {});
-        }
-      })
-      .catch((error) => this.onError(error));
+    cycle.latestThinkingText = preview;
+    if (cycle.thinkingUpdater) cycle.thinkingUpdater.update(preview);
   }
 
   private finishThinkingPreview(cycle: ReplyCycle): void {
+    if (cycle.thinkingDone) return;
     cycle.thinkingDone = true;
     const updater = cycle.thinkingUpdater;
-    if (updater) {
-      updater.update("💭 思考完成");
-      void updater.finalize().catch((error) => this.onError(error));
+    if (!updater) return; // row's sendText still in flight — its .then sees thinkingDone and cleans up
+    if (!cycle.sawThinking && this.adapter.deleteMessage) {
+      // The run never produced thinking — remove the transient placeholder row.
+      void this.adapter.deleteMessage(cycle.chat, updater.messageId).catch((error) => this.onError(error));
+      return;
     }
+    updater.update("💭 思考完成");
+    void updater.finalize().catch((error) => this.onError(error));
   }
 
   private async postInteractionMessage(cycle: ReplyCycle, pending: PendingInteraction): Promise<void> {

@@ -86,6 +86,8 @@ export interface ChatAdapter {
   editMessage(target: ChatTarget, messageId: string, text: string, options?: SendOptions): Promise<void>;
   /** Best-effort typing indicator (Telegram `sendChatAction`, Discord `sendTyping`). */
   setTyping?(target: ChatTarget): Promise<void>;
+  /** Delete a message the bot sent (used to clean up transient rows). */
+  deleteMessage?(target: ChatTarget, messageId: string): Promise<void>;
 }
 
 /** A pending interaction surfaced to the user as buttons. */
