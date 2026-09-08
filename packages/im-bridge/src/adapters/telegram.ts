@@ -25,9 +25,45 @@ import type {
 const TG_MAX_TEXT = 4096;
 const CALLBACK_DATA_LIMIT = 64;
 const NOT_MODIFIED_PATTERN = /message is not modified/i;
+const PARSE_ERROR_PATTERN = /can't parse entities/i;
 
 /** Bridge-level commands; Telegram-specific `/cmd@OtherBot` addressing is filtered. */
 const COMMAND_PATTERN = /^\/(new|stop)(?:@([\w-]+))?(?:\s|$)/;
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Inline constructs with unambiguous Telegram HTML equivalents; the rest passes through escaped. */
+function inlineMarkdownToHtml(text: string): string {
+  let out = escapeHtml(text);
+  out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+  out = out.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
+  out = out.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+  return out;
+}
+
+/**
+ * Convert a markdown subset to Telegram's HTML parse mode (the runtime's
+ * assistant text is plain markdown — rendering it verbatim shows raw ```
+ * fences / `**` markers). Conservative by design: only fenced code, inline
+ * code, bold, ATX headers and links are mapped; everything else is escaped
+ * as-is, so plain IM strings (`⏳`, tool status lines) never break parsing.
+ */
+function toTelegramHtml(text: string): string {
+  // Odd segments lie between fences (possibly unterminated while streaming —
+  // still renderable); the runtime's splitter already keeps fences whole.
+  const parts = text.split(/```[a-zA-Z0-9_+-]*\n?/);
+  let html = "";
+  for (let i = 0; i < parts.length; i++) {
+    html +=
+      i % 2 === 1
+        ? `<pre><code>${escapeHtml(parts[i].replace(/\n$/, ""))}</code></pre>`
+        : inlineMarkdownToHtml(parts[i]);
+  }
+  return html;
+}
 
 export interface TelegramAdapterOptions {
   botToken: string;
@@ -67,7 +103,7 @@ function clamp(text: string): string {
 export class TelegramAdapter implements ChatAdapter {
   readonly platform = "telegram";
   readonly caps: AdapterCaps = {
-    markdown: false, // first version sends plain text — MarkdownV2 escaping is strict
+    markdown: true, // rendered via parse_mode: "HTML" (see toTelegramHtml)
     editMessage: true,
     buttons: true,
     maxTextLength: TG_MAX_TEXT,
@@ -91,11 +127,13 @@ export class TelegramAdapter implements ChatAdapter {
     if (this.started) return;
     await this.bot.init(); // populates botInfo.username used by mention checks
     // bot.start() long-polls until stop(); it must not be awaited here.
-    void this.bot.start({
-      onStart: () => {
-        // Long polling active — inbound delivery happens via handlers.
-      },
-    });
+    void this.bot
+      .start({
+        onStart: () => {
+          // Long polling active — inbound delivery happens via handlers.
+        },
+      })
+      .catch((error) => this.onError(error)); // e.g. invalid token — surface, never silent
     this.started = true;
   }
 
@@ -114,11 +152,24 @@ export class TelegramAdapter implements ChatAdapter {
   }
 
   async sendText(target: ChatTarget, text: string, options?: SendOptions): Promise<SentMessageRef> {
-    const message = await this.bot.api.sendMessage(target.chatId, clamp(text), {
+    const extras = {
       ...(target.threadId !== undefined ? { message_thread_id: Number(target.threadId) } : {}),
       reply_markup: toKeyboard(options?.buttons),
-    });
-    return { messageId: String(message.message_id), chat: target };
+    };
+    try {
+      const message = await this.bot.api.sendMessage(target.chatId, clamp(toTelegramHtml(text)), {
+        ...extras,
+        parse_mode: "HTML",
+      });
+      return { messageId: String(message.message_id), chat: target };
+    } catch (error) {
+      if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
+        // Malformed entities (e.g. a truncated fence) — degrade to plain text.
+        const message = await this.bot.api.sendMessage(target.chatId, clamp(text), extras);
+        return { messageId: String(message.message_id), chat: target };
+      }
+      throw error;
+    }
   }
 
   async sendButtons(target: ChatTarget, text: string, buttons: Button[]): Promise<SentMessageRef> {
@@ -128,12 +179,19 @@ export class TelegramAdapter implements ChatAdapter {
 
   async editMessage(target: ChatTarget, messageId: string, text: string, options?: SendOptions): Promise<void> {
     try {
-      await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(text), {
+      await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(toTelegramHtml(text)), {
         reply_markup: toKeyboard(options?.buttons),
+        parse_mode: "HTML",
       });
     } catch (error) {
       // Editing with identical content is a no-op condition, not a failure.
       if (error instanceof Error && NOT_MODIFIED_PATTERN.test(error.message)) return;
+      if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
+        await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(text), {
+          reply_markup: toKeyboard(options?.buttons),
+        });
+        return;
+      }
       throw error;
     }
   }
