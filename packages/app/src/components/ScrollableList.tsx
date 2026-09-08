@@ -14,10 +14,9 @@ interface ScrollableListProps<T> {
   maxVisible: number;
   scrollOffset: number;
   renderItem: (item: T, index: number) => ReactNode;
-  showCount?: boolean;
 }
 
-export function ScrollableList<T>({ items, maxVisible, scrollOffset, renderItem, showCount }: ScrollableListProps<T>) {
+export function ScrollableList<T>({ items, maxVisible, scrollOffset, renderItem }: ScrollableListProps<T>) {
   if (items.length === 0) return null;
 
   const start = Math.max(0, Math.min(scrollOffset, items.length - maxVisible));
@@ -26,10 +25,6 @@ export function ScrollableList<T>({ items, maxVisible, scrollOffset, renderItem,
 
   const hasMoreAbove = start > 0;
   const hasMoreBelow = end < items.length;
-  const countText =
-    showCount && items.length > maxVisible
-      ? `(${Math.min(scrollOffset + 1, items.length - maxVisible + 1)}/${items.length - maxVisible + 1})`
-      : "";
 
   return (
     <>
@@ -43,11 +38,6 @@ export function ScrollableList<T>({ items, maxVisible, scrollOffset, renderItem,
       <Text color={COLORS.muted} dimColor>
         {hasMoreBelow ? `\u25bc (${items.length - end} more)` : "\u2500"}
       </Text>
-      {showCount && (
-        <Text color={COLORS.muted} dimColor>
-          {countText}
-        </Text>
-      )}
     </>
   );
 }

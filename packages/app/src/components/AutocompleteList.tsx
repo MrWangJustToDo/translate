@@ -68,7 +68,6 @@ export const AutocompleteList = () => {
         maxVisible={MAX_VISIBLE}
         scrollOffset={scrollOffset}
         renderItem={renderItem}
-        showCount
       />
     </Box>
   );
