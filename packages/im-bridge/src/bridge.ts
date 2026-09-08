@@ -277,8 +277,11 @@ export class BridgeRuntime {
         }
       })
       .catch((error) => {
-        if (this.cycles.get(chatKey) === cycle) this.cycles.delete(chatKey);
-        cycle.unsubscribe();
+        // The placeholder send failed (transient 429 flood control / blocked
+        // bot). Keep the cycle alive: renderCycle keeps buffering into
+        // `pendingText`, and retireCycle delivers the final text directly —
+        // the run's reply must not be silently lost because the placeholder
+        // never landed.
         this.onError(error);
       });
     return cycle;
@@ -372,6 +375,10 @@ export class BridgeRuntime {
       } catch (error) {
         this.onError(error);
       }
+    } else {
+      // Placeholder never resolved (send failed) — deliver the final text as
+      // a fresh message instead of dropping the run's reply.
+      await this.safeSendText(cycle.chat, text);
     }
     cycle.unsubscribe();
   }

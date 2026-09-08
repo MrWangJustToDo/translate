@@ -28,6 +28,35 @@ const NOT_MODIFIED_PATTERN = /message is not modified/i;
 const PARSE_ERROR_PATTERN = /can't parse entities/i;
 /** getMe can hang indefinitely on unreachable networks — cap it so startup fails fast. */
 const TG_INIT_TIMEOUT_MS = 10_000;
+/** Bounded flood-control retry (mirrors grammY autoRetry): honor retry_after, capped. */
+const MAX_SEND_ATTEMPTS = 3;
+const FLOOD_WAIT_CAP_MS = 30_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function floodRetryAfterMs(error: unknown): number {
+  const params = (error as { parameters?: { retry_after?: number } } | null | undefined)?.parameters;
+  const retryAfter = params?.retry_after;
+  return typeof retryAfter === "number" && retryAfter > 0 ? Math.min(retryAfter * 1000, FLOOD_WAIT_CAP_MS) : 0;
+}
+
+/** Retry a send on 429 flood control (waiting retry_after); other errors surface immediately. */
+async function withFloodRetry<T>(send: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_SEND_ATTEMPTS; attempt++) {
+    try {
+      return await send();
+    } catch (error) {
+      lastError = error;
+      const waitMs = floodRetryAfterMs(error);
+      if (waitMs <= 0) throw error; // not flood control — fail fast
+      await sleep(waitMs + 500);
+    }
+  }
+  throw lastError;
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -180,20 +209,22 @@ export class TelegramAdapter implements ChatAdapter {
       ...(target.threadId !== undefined ? { message_thread_id: Number(target.threadId) } : {}),
       reply_markup: toKeyboard(options?.buttons),
     };
-    try {
-      const message = await this.bot.api.sendMessage(target.chatId, clamp(toTelegramHtml(text)), {
-        ...extras,
-        parse_mode: "HTML",
-      });
-      return { messageId: String(message.message_id), chat: target };
-    } catch (error) {
-      if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
-        // Malformed entities (e.g. a truncated fence) — degrade to plain text.
-        const message = await this.bot.api.sendMessage(target.chatId, clamp(text), extras);
+    return withFloodRetry(async () => {
+      try {
+        const message = await this.bot.api.sendMessage(target.chatId, clamp(toTelegramHtml(text)), {
+          ...extras,
+          parse_mode: "HTML",
+        });
         return { messageId: String(message.message_id), chat: target };
+      } catch (error) {
+        if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
+          // Malformed entities (e.g. a truncated fence) — degrade to plain text.
+          const message = await this.bot.api.sendMessage(target.chatId, clamp(text), extras);
+          return { messageId: String(message.message_id), chat: target };
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   async sendButtons(target: ChatTarget, text: string, buttons: Button[]): Promise<SentMessageRef> {
@@ -202,22 +233,24 @@ export class TelegramAdapter implements ChatAdapter {
   }
 
   async editMessage(target: ChatTarget, messageId: string, text: string, options?: SendOptions): Promise<void> {
-    try {
-      await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(toTelegramHtml(text)), {
-        reply_markup: toKeyboard(options?.buttons),
-        parse_mode: "HTML",
-      });
-    } catch (error) {
-      // Editing with identical content is a no-op condition, not a failure.
-      if (error instanceof Error && NOT_MODIFIED_PATTERN.test(error.message)) return;
-      if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
-        await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(text), {
+    await withFloodRetry(async () => {
+      try {
+        await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(toTelegramHtml(text)), {
           reply_markup: toKeyboard(options?.buttons),
+          parse_mode: "HTML",
         });
-        return;
+      } catch (error) {
+        // Editing with identical content is a no-op condition, not a failure.
+        if (error instanceof Error && NOT_MODIFIED_PATTERN.test(error.message)) return;
+        if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
+          await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(text), {
+            reply_markup: toKeyboard(options?.buttons),
+          });
+          return;
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   async setTyping(target: ChatTarget): Promise<void> {
