@@ -8,7 +8,7 @@ import { useTheme } from "../hooks/use-theme.js";
 import { Agent } from "./Agent.js";
 
 export const App = () => {
-  // Subscribe so /theme palette mutations re-render the tree.
+  // Subscribe so /appearance palette mutations re-render the tree.
   useTheme((s) => s.theme);
 
   const helpRequested = useConfig((s) => s.helpRequested);
