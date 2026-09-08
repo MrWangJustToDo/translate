@@ -49,6 +49,8 @@ interface ReplyCycle {
   closed: boolean;
   unsubscribe: () => void;
   finalizeTimer: ReturnType<typeof setTimeout> | null;
+  /** Periodic sendChatAction while the run works but nothing streamed yet. */
+  typingTimer: ReturnType<typeof setInterval> | null;
   /** Interaction ids already registered as buttons on this cycle. */
   registered: Set<string>;
 }
@@ -262,9 +264,23 @@ export class BridgeRuntime {
         channels: ["messages", "state"],
       }),
       finalizeTimer: null,
+      typingTimer: null,
       registered: new Set(),
     };
     this.cycles.set(chatKey, cycle);
+    // Typing heartbeat: sendChatAction expires after ~5s — re-send while the
+    // run works but nothing has streamed into the reply yet, so the chat shows
+    // "typing…" during thinking/tool phases instead of looking dead.
+    if (this.adapter.setTyping) {
+      cycle.typingTimer = setInterval(() => {
+        if (cycle.closed || cycle.updater?.hasEdited) {
+          if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
+          cycle.typingTimer = null;
+          return;
+        }
+        void this.adapter.setTyping?.(cycle.chat).catch(() => {});
+      }, 4_000);
+    }
     void this.adapter
       .sendText(msg.chat, "⏳")
       .then((reply) => {
@@ -387,6 +403,10 @@ export class BridgeRuntime {
       clearTimeout(cycle.finalizeTimer);
       cycle.finalizeTimer = null;
     }
+    if (cycle.typingTimer !== null) {
+      clearInterval(cycle.typingTimer);
+      cycle.typingTimer = null;
+    }
     if (this.cycles.get(cycle.chatKey) === cycle) this.cycles.delete(cycle.chatKey);
     cycle.pendingText = text;
     const updater = cycle.updater;
@@ -407,6 +427,7 @@ export class BridgeRuntime {
 
   private teardownCycle(cycle: ReplyCycle): void {
     if (cycle.finalizeTimer !== null) clearTimeout(cycle.finalizeTimer);
+    if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
     cycle.unsubscribe();
   }
 
@@ -437,12 +458,13 @@ export class BridgeRuntime {
       }
 
       const session = this.activeSessions.get(record.chatKey);
-      // Ack FIRST — applyInteraction's dispatch blocks until the rest of the
-      // run finishes, and Telegram expires the callback after ~3s (spinner on
-      // the button). The confirmation edit lands when the outcome is known.
       await cb.ack();
-      const outcome = await this.applyInteraction(session, record, payload);
-      await this.safeEditText(cb, renderResolved(describePending(record.pending), outcome));
+      // Optimistic feedback FIRST: applyInteraction's dispatch blocks until the
+      // rest of the run finishes (local mode), so awaiting it left the clicked
+      // row looking dead for the entire run. Resolve the row immediately and
+      // submit in the background; failures surface via onError.
+      await this.safeEditText(cb, renderResolved(describePending(record.pending), outcomeFor(record.pending, payload)));
+      void this.applyInteraction(session, record, payload).catch((error) => this.onError(error));
     } catch (error) {
       this.onError(error);
       await cb.ack();
@@ -463,7 +485,7 @@ export class BridgeRuntime {
         approved,
         ...(approved ? {} : { reason: "denied via IM" }),
       });
-      return approved ? "✅ approved" : "❌ denied";
+      return outcomeFor(record.pending, payload);
     }
     const option = record.pending.options[payload.i ?? -1] ?? "(no answer)";
     await this.dispatch(session, {
@@ -568,4 +590,10 @@ export async function createImBridge(options: BridgeRuntimeOptions): Promise<Bri
 
 function describePending(pending: PendingInteraction): string {
   return pending.kind === "approval" ? `Approval · ${pending.question}` : `Question · ${pending.question}`;
+}
+
+/** Outcome label for a button answer — shared by the optimistic row edit and applyInteraction. */
+function outcomeFor(pending: PendingInteraction, payload: NonNullable<ReturnType<typeof decodeButtonPayload>>): string {
+  if (pending.kind === "approval") return payload.a === "y" ? "✅ approved" : "❌ denied";
+  return `▸ ${pending.options[payload.i ?? -1] ?? "(no answer)"}`;
 }

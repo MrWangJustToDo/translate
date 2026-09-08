@@ -40,6 +40,8 @@ export class StreamUpdater {
   private lastEditAt = 0;
   private editTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+  /** True once any in-place edit has succeeded — used to stop typing heartbeats. */
+  hasEdited = false;
 
   constructor(options: StreamUpdaterOptions) {
     this.adapter = options.adapter;
@@ -123,6 +125,7 @@ export class StreamUpdater {
     }
     this.lastEditAt = Date.now();
     this.lastEditedText = text;
+    this.hasEdited = true;
   }
 }
 
