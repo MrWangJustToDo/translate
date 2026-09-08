@@ -251,14 +251,28 @@ export function renderReply(messages: UIMessage[]): RenderedReply {
   const pending = scanPendingInteractions(run);
 
   const lines: string[] = [];
+  let textChars = 0;
+  let lastThinking = "";
   for (const message of run) {
     for (const part of message.parts) {
       if (part.type === "text") {
-        if (part.content.trim().length > 0) lines.push(part.content);
+        if (part.content.trim().length > 0) {
+          lines.push(part.content);
+          textChars += part.content.length;
+        }
       } else if (isToolCallPart(part)) {
         lines.push(toolStatusLine(part));
+      } else if (part.type === "thinking" && part.content) {
+        lastThinking = part.content;
       }
     }
+  }
+
+  // Reasoning models can think for 25s+ before the first visible text token —
+  // surface a live thinking preview instead of a frozen message (kept only
+  // while no answer text exists yet; tool lines already show activity).
+  if (textChars === 0 && lastThinking) {
+    lines.push(`💭 ${lastThinking.replace(/\s+/g, " ").trim().slice(-120)}`);
   }
 
   return { text: lines.join("\n\n").trim(), pending };
