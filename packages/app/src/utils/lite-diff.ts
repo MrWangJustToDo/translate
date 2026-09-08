@@ -1,16 +1,16 @@
 /**
  * LiteDiff — cheap unified-diff pipeline for message-view previews.
  *
- * Modeled after gemini-cli's DiffRenderer: jsdiff `createPatch` (context 3)
+ * Modeled after gemini-cli's DiffRenderer: jsdiff `createPatch` (context 1)
  * runs once per content change, the patch string is parsed into rows, and
- * only changed hunks (+ small context) are rendered. Pure module — no React —
+ * only changed hunks (+ minimal context) are rendered. Pure module — no React —
  * so it can be unit-tested and memoized by the component layer.
  */
 
 import { createPatch } from "diff";
 
-/** Lines of context kept around each hunk (same as gemini-cli / git). */
-const CONTEXT_LINES = 3;
+/** Lines of context kept around each hunk — lite keeps it minimal to save height. */
+const CONTEXT_LINES = 1;
 /** Collapse a context run into a gap marker once the line-number jump exceeds this. */
 const MAX_CONTEXT_LINES_WITHOUT_GAP = 5;
 
@@ -83,7 +83,7 @@ export function parsePatchRows(patch: string): LiteDiffRow[] {
  *  - tail truncation at `maxLines` (head-first, like a code preview).
  */
 export function createLiteDiff(oldFile: string, newFile: string, options: LiteDiffOptions = {}): LiteDiffResult {
-  const maxLines = options.maxLines ?? 60;
+  const maxLines = options.maxLines ?? 40;
 
   let additions = 0;
   let deletions = 0;

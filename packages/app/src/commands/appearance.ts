@@ -1,3 +1,4 @@
+import { useDiffRenderer } from "../hooks/use-diff-renderer.js";
 import { useTheme } from "../hooks/use-theme.js";
 import { useTranscriptDisplay } from "../hooks/use-transcript-display.js";
 import { isThemeName, THEME_NAMES } from "../theme/colors.js";
@@ -11,11 +12,12 @@ const DISPLAY_MODES: readonly TranscriptDisplayMode[] = ["compact", "full"];
 registerCommand({
   name: "appearance",
   description: "Set UI appearance — color theme and transcript display density (grouped menu)",
-  usage: "/appearance [theme toggle|theme gemini|theme claude|display toggle|display compact|display full]",
+  usage: "/appearance [theme ...|display ...|diff ...]",
   immediate: false,
   getOptions: () => {
     const theme = useTheme.getActions().getTheme();
     const display = useTranscriptDisplay.getActions().getMode();
+    const diff = useDiffRenderer.getActions().getMode();
     return [
       {
         label: "theme toggle",
@@ -43,17 +45,34 @@ registerCommand({
               ? "One-line tools; fold consecutive reads/searches"
               : "Full tool rows and outputs",
       })),
+      { separator: true, label: "", value: "" },
+      {
+        label: "diff toggle",
+        value: "diff toggle",
+        description: `Switch diff renderer (current: ${diff})`,
+      },
+      {
+        label: "diff lite",
+        value: "diff lite",
+        description: diff === "lite" ? "current" : "Hunk-only rows, wraps long lines (gemini-cli style)",
+      },
+      {
+        label: "diff full",
+        value: "diff full",
+        description: diff === "full" ? "current" : "git-diff-view Split/Unified view (wraps long lines)",
+      },
     ];
   },
   execute: (args) => {
     const theme = useTheme.getActions();
     const display = useTranscriptDisplay.getActions();
+    const diff = useDiffRenderer.getActions();
 
     const usageError = () => ({
       ok: false as const,
       error: `Usage: /appearance theme [toggle|${THEME_NAMES.join("|")}] · display [toggle|${DISPLAY_MODES.join(
         "|"
-      )}] — Theme: ${theme.getTheme()} · Display: ${display.getMode()}`,
+      )}] · diff [toggle|lite|full] — Theme: ${theme.getTheme()} · Display: ${display.getMode()} · Diff: ${diff.getMode()}`,
     });
 
     const trimmed = args.trim().toLowerCase();
@@ -76,7 +95,21 @@ registerCommand({
       return { ok: true, message: `Theme: ${rest}` };
     }
 
-    // Bare display args (toggle / compact / full) stay accepted for convenience.
+    if (head === "diff") {
+      const rest = tail || "toggle";
+      if (rest === "toggle") {
+        return { ok: true, message: `Diff renderer: ${diff.toggle()}` };
+      }
+      if (rest === "lite" || rest === "full") {
+        diff.setMode(rest);
+        return { ok: true, message: `Diff renderer: ${rest}` };
+      }
+      return usageError();
+    }
+
+    // Bare display args (toggle / compact / full) stay accepted — the bare
+    // "full" is display density, diff full requires the "diff" prefix.
+    // Bare "lite" is accepted for the diff renderer.
     const rest = head === "display" ? tail || "toggle" : head;
     if (rest === "toggle") {
       return { ok: true, message: `Display mode: ${display.toggle()}` };
@@ -88,6 +121,10 @@ registerCommand({
           ? " (one-line tools; fold consecutive completed tools into activity summaries)"
           : " (full tool rows and outputs)";
       return { ok: true, message: `Display mode: ${rest}${hint}` };
+    }
+    if (rest === "lite") {
+      diff.setMode(rest);
+      return { ok: true, message: `Diff renderer: ${rest}` };
     }
 
     return usageError();

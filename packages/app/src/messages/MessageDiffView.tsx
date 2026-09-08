@@ -3,8 +3,8 @@ import { memo, useMemo } from "react";
 import { EditDiff } from "../components/EditDiff.js";
 import { HalfLinePaddedBox } from "../components/HalfLinePaddedBox.js";
 import { LiteDiff } from "../components/LiteDiff.js";
+import { useDiffRenderer } from "../hooks/use-diff-renderer.js";
 import { BG } from "../theme/colors.js";
-import { USE_LITE_DIFF } from "../utils/diff-renderer-flag.js";
 
 export type MessageDiffViewProps = {
   width: number;
@@ -28,10 +28,11 @@ function hashContent(value: string): number {
 }
 
 /**
- * In-message diff preview. Defaults to LiteDiff (hunk-only unified diff with
- * cached per-line highlight); flip {@link USE_LITE_DIFF} to false to restore
- * the legacy `@git-diff-view` renderer. The rich interactive
- * `@git-diff-view` view remains workspace-only (FileDiffContent / FileContent).
+ * In-message diff preview. Renderer is runtime-selectable via `/appearance`
+ * (defaults to LiteDiff — hunk-only unified diff with cached per-line
+ * highlight; "full" restores the wrapping `@git-diff-view` renderer). The
+ * rich interactive `@git-diff-view` view remains workspace-only
+ * (FileDiffContent / FileContent).
  */
 export const MessageDiffView = memo(function MessageDiffView({
   width,
@@ -47,7 +48,9 @@ export const MessageDiffView = memo(function MessageDiffView({
     [oldPath, newPath, oldFile, newFile]
   );
 
-  if (!USE_LITE_DIFF) {
+  const full = useDiffRenderer((s) => s.mode === "full");
+
+  if (full) {
     return (
       <HalfLinePaddedBox backgroundColor={BG.toolResult} transparentBody width={width}>
         <EditDiff

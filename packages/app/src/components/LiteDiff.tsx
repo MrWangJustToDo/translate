@@ -3,7 +3,7 @@ import { memo, useMemo } from "react";
 
 import { BG, COLORS } from "../theme/colors.js";
 import { syntaxColorForClasses } from "../theme/syntax-colors.js";
-import { highlightLine, langForPath, type LiteDiffSegment } from "../utils/lite-diff-highlight.js";
+import { highlightLine, langForPath } from "../utils/lite-diff-highlight.js";
 import { createLiteDiff, type LiteDiffRow } from "../utils/lite-diff.js";
 
 /**
@@ -20,7 +20,7 @@ export type LiteDiffProps = {
   oldFile: string;
   newFile: string;
   width: number;
-  /** Max rendered rows before tail truncation (default 60). */
+  /** Max rendered rows before tail truncation (default 40). */
   maxLines?: number;
   /** 1-based line offset for fragment diffs (prepends virtual empty lines). */
   startLine?: number;
@@ -49,7 +49,7 @@ export const LiteDiff = memo(function LiteDiff({
   oldFile,
   newFile,
   width,
-  maxLines = 60,
+  maxLines = 40,
   startLine,
 }: LiteDiffProps) {
   const paddedOld = startLine && startLine > 1 ? "\n".repeat(startLine - 1) + oldFile : oldFile;
@@ -64,7 +64,6 @@ export const LiteDiff = memo(function LiteDiff({
   const maxNew = rows.reduce((acc, r) => Math.max(acc, r.newLine ?? 0), 0);
   const numWidth = Math.max(3, String(Math.max(maxOld, maxNew)).length);
   const gutterWidth = numWidth * 2 + 4; // "nnnn nnnn m " (m = +/- marker)
-  const contentWidth = Math.max(10, width - gutterWidth);
 
   if (rows.length === 0) {
     return <Text color={COLORS.muted}>{oldFile === "" && newFile === "" ? "empty file" : "no changes"}</Text>;
@@ -84,46 +83,31 @@ export const LiteDiff = memo(function LiteDiff({
         const marker = rowMarker(row.type);
         const rawText = row.text;
         const segments = highlightLine(rawText, lang);
-        const plain = rawText.slice(0, contentWidth);
-        let shownLength = plain.length;
-        const clipped: LiteDiffSegment[] = [];
-        if (segments) {
-          let used = 0;
-          for (const seg of segments) {
-            const remaining = contentWidth - used;
-            if (remaining <= 0) break;
-            const text = seg.text.slice(0, remaining);
-            used += text.length;
-            clipped.push({ ...seg, text });
-          }
-          shownLength = used;
-        }
-        // Pad to the full row width so the add/del background spans edge to edge.
-        const fill = " ".repeat(Math.max(0, width - gutterWidth - shownLength));
-        // Nested <Text> does NOT inherit the outer row <Text>'s background —
-        // backgroundContext comes only from Boxes — so pass the row bg down
-        // explicitly, otherwise gutter/highlight spans would show the parent
-        // HalfLinePaddedBox background instead of the diff color.
+        // Rows mirror gemini-cli's DiffRenderer: a fixed gutter followed by a
+        // wrapping content Text, so long lines fold onto continuation rows
+        // (aligned under the content column) instead of being truncated.
+        // The row Box carries the add/del background across the full rect —
+        // including wrapped continuation rows and trailing empty cells — so no
+        // fill padding is needed.
         return (
-          <Text key={i} backgroundColor={bg}>
-            <Text color={COLORS.muted} dimColor backgroundColor={bg}>
-              {`${padNum(row.oldLine, numWidth)} ${padNum(row.newLine, numWidth)} ${marker} `}
-            </Text>
-            {segments ? (
-              clipped.map((seg, si) =>
-                seg.text ? (
-                  <Text key={si} color={syntaxColorForClasses(seg.classes)} backgroundColor={bg}>
-                    {seg.text}
-                  </Text>
-                ) : null
-              )
-            ) : (
-              <Text color={COLORS.text} backgroundColor={bg}>
-                {plain}
+          <Box key={i} flexDirection="row" width={width} flexShrink={0} backgroundColor={bg}>
+            <Box flexShrink={0}>
+              <Text color={COLORS.muted} dimColor backgroundColor={bg}>
+                {` ${padNum(row.oldLine, numWidth)} ${padNum(row.newLine, numWidth)} ${marker} `}
               </Text>
-            )}
-            {fill}
-          </Text>
+            </Box>
+            <Text wrap="wrap" color={COLORS.text} backgroundColor={bg}>
+              {segments
+                ? segments.map((seg, si) =>
+                    seg.text ? (
+                      <Text key={si} color={syntaxColorForClasses(seg.classes)}>
+                        {seg.text}
+                      </Text>
+                    ) : null
+                  )
+                : rawText}
+            </Text>
+          </Box>
         );
       })}
       {result.hidden > 0 && (
