@@ -34,11 +34,20 @@ function isToolCallPart(part: UIMessage["parts"][number]): part is ToolCallPart 
   return part.type === "tool-call";
 }
 
-/** Messages of the current run: everything after the last user message. */
+/**
+ * Synthetic `<ctx kind=…>` injection messages (core synthetic-injection.ts: `ctx-<kind>-<hash>` ids)
+ * land in the transcript as `role:"user"` — including MID-RUN (e.g. a refreshed
+ * `git_status` between two assistant rounds). They are not turn boundaries.
+ */
+export function isSyntheticContextMessage(message: UIMessage): boolean {
+  return message.role === "user" && /^ctx-[^-]+-/.test(message.id);
+}
+
+/** Messages of the current run: everything after the last REAL user message. */
 export function currentRunMessages(messages: UIMessage[]): UIMessage[] {
   let lastUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
+    if (messages[i].role === "user" && !isSyntheticContextMessage(messages[i])) {
       lastUserIndex = i;
       break;
     }
