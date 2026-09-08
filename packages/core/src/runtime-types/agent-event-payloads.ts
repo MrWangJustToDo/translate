@@ -69,6 +69,13 @@ export type AgentEventPayloadMap = {
     approval_id?: string;
     tool_input?: unknown;
   };
+  "agent:tool-approval-resolved": {
+    tool_name?: string;
+    tool_call_id?: string;
+    approval_id?: string;
+    decision: "approved" | "denied";
+    reason?: string;
+  };
   "agent:tool-end": {
     tool_name?: string;
     tool_call_id?: string;
@@ -125,24 +132,34 @@ export type AgentEventPayloadMap = {
   };
   "llm:request": {
     model?: string;
+    iteration?: number;
     messagesCount?: number;
     toolsCount?: number;
   };
   "llm:response": {
+    model?: string;
+    iteration?: number;
     finishReason?: string;
     inputTokens?: number;
     outputTokens?: number;
     cacheHitTokens?: number;
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
+    reasoningTokens?: number;
+    costUsd?: number;
+    roundElapsedMs?: number;
+    firstTokenMs?: number;
     durationMs?: number;
   };
   "turn:summary": {
+    outcome?: "finished" | "aborted" | "error";
     llmCalls?: number;
     toolCalls?: number;
     inputTokens?: number;
     outputTokens?: number;
     cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    costUsd?: number;
     durationMs?: number;
   };
   "compaction:auto-start": {
@@ -181,6 +198,12 @@ export type AgentEventPayloadMap = {
   "subagent:completed": {
     subagentId?: string;
     summary: string;
+    iterations?: number;
+    durationMs?: number;
+    usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
   };
   "subagent:error": {
     subagentId?: string;

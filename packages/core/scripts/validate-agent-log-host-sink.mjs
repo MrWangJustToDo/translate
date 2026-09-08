@@ -62,7 +62,7 @@ const manager = new AgentManager();
 const host = createLocalAgentSessionHost({ manager });
 
 // ----------------------------------------------------------------------------
-// 1. Main agent: stable ses_ id + session-scoped log dir with backfill.
+// 1. Main agent: stable ses_ id + session-scoped log dir with bootstrap events.
 // ----------------------------------------------------------------------------
 const result = await host.create({ name: "verify", model: "test-model" });
 const managed = manager.getAgent(result.session.getSnapshot().agentId);
@@ -85,7 +85,7 @@ assert.ok(
 );
 const content = await fs.promises.readFile(logFile, "utf-8");
 assert.ok(content.includes("host-level-entry"), "runtime entry landed on disk");
-assert.ok(content.includes("session:start"), "bootstrap entry backfilled");
+assert.ok(content.includes("Session started"), "bootstrap entry persisted (sink attached before bootstrap events)");
 console.log("main agent OK:", path.relative(rootPath, logDir));
 
 // ----------------------------------------------------------------------------

@@ -78,7 +78,7 @@ packages/app/src/adapter/create-agent.ts
   resolveModelConfigFromProvider({ model, style, baseURL, apiKey })
     // merges ModelProvider (remote forces baseURL/apiKey)
   agentManager.createManagedAgent({ modelInfo, modelStyle, ... })
-  wire React stores (useAgent, useAgentLog, useTodoManager)
+  wire React stores (useAgent, useTodoManager)
   optional: continueLatestSession() / resumeSession() → initialMessages
 ```
 
@@ -712,7 +712,7 @@ managed.emitEvent(type, data);
 
 **Host observation API:** `AgentSession` only (`createLocalAgentSession` / HTTP client) — `getSnapshot` / `dispatch` / `subscribe(channels)`. Domain classes expose typed `.on(...)` for Session projection and package-internal use; there is no parallel `ManagedAgent.observe()` facade.
 
-Internal domain updates use a typed `Emitter` (todos, usage, L1 state, queues, plan, UI messages, log). Session channels project from those emitters; `lifecycle` projects a filtered `AgentTelemetryBus` set. Structured `log` is an opt-in session channel (not in default subscribe).
+Internal domain updates use a typed `Emitter` (todos, usage, L1 state, queues, plan, UI messages). Session channels project from those emitters; `lifecycle` projects a filtered `AgentTelemetryBus` set. The former structured `log` session channel was removed — log observability is provided exclusively by the persisted JSONL file sink (`.agents/logs/{sessionId}/agent.log`).
 
 **Messages channel:** Session snapshots always carry a full `UIMessage[]`; the `messages` channel delivers the same full array (JSON-patch / delta delivery is deferred). Wire projection for the model loop is cached by channel revision + last-message fingerprint (`WireProjectionCache`).
 
@@ -727,11 +727,11 @@ Task / compact summary text uses `ManagedAgent.summaryStreams` (`SummaryStreamHu
 | Session I/O       | `session:restore`, `session:save-error`                                                                                                |
 | Run lifecycle     | `prompt:submit`, `agent:thinking`, `agent:abort`, `agent:stream-error`, `agent:stop`                                                   |
 | LLM iteration     | `llm:request`, `llm:response` — **per TanStack iteration**, not per user turn                                                          |
-| Turn rollup       | `turn:summary` — end of `AgentChatController.pumpToolPhases`                                                                           |
-| Tools             | `agent:tool-start`, `agent:tool-approval-request`, `agent:tool-end`, `agent:tool-error`                                                |
+| Turn rollup       | `turn:summary` — end of `AgentChatController.pumpToolPhases` (outcome, LLM/tool calls, tokens, cost, duration)                            |
+| Tools             | `agent:tool-start`, `agent:tool-approval-request`, `agent:tool-approval-resolved`, `agent:tool-end`, `agent:tool-error`                |
 | Memory            | `memory:prefetch`, `memory:extract`, `memory:consolidate`                                                                              |
 | Compaction        | `compaction:auto-*`, `compaction:reactive-*` (start kind matches path)                                                                 |
-| Subagent          | `subagent:created`, `subagent:started`, `subagent:completed` (`summary`), `subagent:error`, `subagent:destroyed`, `subagent:ui-update` |
+| Subagent          | `subagent:created`, `subagent:started`, `subagent:completed` (`summary` + `iterations`/`durationMs`/`usage`), `subagent:error`, `subagent:destroyed`, `subagent:ui-update` |
 
 ### 8.4 Event → Log bridge
 
@@ -741,6 +741,14 @@ Task / compact summary text uses `ManagedAgent.summaryStreams` (`SummaryStreamHu
 - `DEFAULT_EVENT_LOG_RULES` controls level/category/message per event
 - Complex events (MCP, memory, compaction) use dedicated log handlers (no UI notify)
 - Emit sites should **not** duplicate `log.info` / `log.approval` for lifecycle events covered by the bridge
+
+**Persistence-only log:** `AgentLog` writes every accepted entry straight to the JSONL file sink (`.agents/logs/{sessionId}/agent.log`, size-based rotation) — no in-memory ring, query API, or UI channel. The sink is attached in `AgentManager.createManagedAgent` **before** bootstrap events fire, so the timeline includes `session:*` entries. Entries logged while an agent run is in flight carry a short `run` id (`prepareManagedAgentForRun` sets it, finalize clears it).
+
+**Payload summarization:** the bridge summarizes event payloads via `summarizePayload` — large fields (`tool_input` / `tool_output` / unknown objects) become `{field}Bytes` + `{field}Preview` (≤200 chars); scalar observability fields (ids/names/counts/bytes/tokens/ms) pass through; the redundant `eventType` is dropped.
+
+**Opt-in hook echoes:** middleware hook-call echoes (`middleware:{name}:{hook}`) are off by default and only written when `MY_AGENT_LOG_HOOKS` is truthy.
+
+**Timeline metrics:** `llm:request`/`llm:response` carry `model`/`iteration`; `llm:response` adds `reasoningTokens`, `costUsd`, `roundElapsedMs`, `firstTokenMs` (from `UsageTracker` per-call tracking). Status transitions are logged from `ManagedAgent.setStatus` (`from`/`to` + controller-supplied `trigger`); approval resolutions are emitted as `agent:tool-approval-resolved` by `ToolApprovalTable.upsert` (pending → approved/denied only).
 
 ### 8.5 Extension interception (L4)
 

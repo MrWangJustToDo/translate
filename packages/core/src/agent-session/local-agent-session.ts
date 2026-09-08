@@ -276,13 +276,8 @@ class LocalAgentSessionImpl implements AgentSession {
       );
     }
 
-    if (channelAllowed("log", selected) && managed.log) {
-      unsubs.push(
-        managed.log.on("entry", (payload) => {
-          this.events.emit("log", { channel: "log", payload, ts: now() });
-        })
-      );
-    }
+    // No `log` channel: log observability is provided exclusively by the
+    // persisted JSONL file sink (.agents/logs/{sessionId}/agent.log).
 
     if (channelAllowed("extension-ui", selected)) {
       const ui = managed.extensionRunner?.getUI();

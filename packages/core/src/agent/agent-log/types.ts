@@ -31,6 +31,8 @@ export interface LogEntry {
   };
   /** Optional tags for filtering */
   tags?: string[];
+  /** Optional short run id — entries written during an agent run share one id. */
+  run?: string;
 }
 
 /** Options for persisting AgentLog entries to a JSONL file. */
@@ -45,22 +47,4 @@ export interface AgentLogFileSinkOptions {
   maxFiles?: number;
   /** Batch-flush interval in ms (default 250). */
   flushIntervalMs?: number;
-}
-
-/** Log filter options */
-export interface LogFilter {
-  /** Filter by levels */
-  levels?: LogLevel[];
-  /** Filter by categories */
-  categories?: LogCategory[];
-  /** Filter by tags (any match) */
-  tags?: string[];
-  /** Filter by time range (start) */
-  since?: number;
-  /** Filter by time range (end) */
-  until?: number;
-  /** Search in message */
-  search?: string;
-  /** Limit results */
-  limit?: number;
 }

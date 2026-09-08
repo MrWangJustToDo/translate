@@ -63,10 +63,11 @@ const logDir = path.join(rootPath, ".agents/logs/ses_test");
 const filePath = path.join(logDir, "agent.log");
 
 // ----------------------------------------------------------------------------
-// 1. Backfill: entries logged before attach must be persisted first.
+// 1. Persistence-only: pre-attach entries are dropped; post-attach entries are
+//    persisted with data + error fields.
 // ----------------------------------------------------------------------------
 const log = new AgentLog();
-log.info("system", "session:start");
+log.info("system", "pre-attach-dropped");
 log.error("agent", "boom-3", new Error("test error"));
 
 const detach = log.attachFileSink({
@@ -79,13 +80,14 @@ const detach = log.attachFileSink({
 
 log.info("system", "hello-1");
 log.warn("agent", "warn-2", { n: 2 });
+log.error("agent", "boom-3", new Error("test error"));
 await sleep(80);
 
 const lines = (await fs.promises.readFile(filePath, "utf-8")).trim().split("\n");
-assert.ok(lines.length >= 4, `expected >=4 lines, got ${lines.length}`);
+assert.equal(lines.length, 3, `pre-attach entries dropped, expected 3 lines, got ${lines.length}`);
 
 const first = JSON.parse(lines[0]);
-assert.equal(first.message, "session:start", "pre-attach entry backfilled first");
+assert.equal(first.message, "hello-1", "post-attach entry persisted first");
 assert.equal(first.category, "system");
 
 const boom = JSON.parse(lines.find((l) => l.includes("boom-3")));

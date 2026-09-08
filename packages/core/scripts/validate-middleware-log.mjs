@@ -1,16 +1,16 @@
 /**
- * Validates instrumentMiddlewareLog: each middleware hook invocation is
- * recorded to the agent log (category `hooks`, debug level) with phase +
- * iteration, return values (sync + async/promise) pass through untouched,
- * high-frequency onChunk and nested sandbox hooks are skipped, and middleware
- * without a name fall back to "anonymous".
+ * Validates instrumentMiddlewareLog under the timeline contract: hook-call
+ * echoes are OFF by default (opt-in via `MY_AGENT_LOG_HOOKS`), return values
+ * (sync + async/promise) pass through untouched in both modes, and
+ * high-frequency onChunk and nested sandbox hooks are never wrapped.
  *
  * Run: pnpm --filter @my-agent/core run validate:middleware-log
  */
 
 import assert from "node:assert/strict";
 
-import { AgentLog, instrumentMiddlewareLog } from "../dist/dev.mjs";
+import { instrumentMiddlewareLog } from "../dist/dev.mjs";
+import { createLogCapture, sleep } from "./helpers/log-capture.mjs";
 
 // A realistic ChatMiddleware-shaped object (plain object, like the create*
 // factories return).
@@ -48,12 +48,15 @@ const ctx = {
   iteration: 2,
 };
 
-const log = new AgentLog();
+const capture = await createLogCapture("middleware-log");
+const { log, readEntries } = capture;
 const wrapped = instrumentMiddlewareLog(middleware, log);
 
 // ----------------------------------------------------------------------------
-// 1. Named middleware: hooks logged + return value passed through.
+// 1. Default (MY_AGENT_LOG_HOOKS unset): no hook echoes, returns still pass.
 // ----------------------------------------------------------------------------
+delete process.env.MY_AGENT_LOG_HOOKS;
+
 const configOut = wrapped[0].onConfig(ctx, { messages: ["a"] });
 assert.deepEqual(configOut, { messages: ["a", "transformed"] }, "onConfig return passes through");
 assert.deepEqual(calls[0], { hook: "onConfig", phase: "beforeModel", iteration: 2 });
@@ -61,24 +64,28 @@ assert.deepEqual(calls[0], { hook: "onConfig", phase: "beforeModel", iteration: 
 const startOut = wrapped[0].onStart(ctx);
 assert.equal(startOut, undefined, "onStart void return passes through");
 
-// ----------------------------------------------------------------------------
-// 2. Anonymous middleware: async hook resolved + logged.
-// ----------------------------------------------------------------------------
 const iterOut = await wrapped[1].onIteration(ctx);
 assert.equal(iterOut, "iter", "async hook return passes through");
-assert.deepEqual(calls[2], { hook: "onIteration", phase: "beforeModel", iteration: 2 });
 
-// ----------------------------------------------------------------------------
-// 3. onChunk / sandbox are NOT wrapped.
-// ----------------------------------------------------------------------------
 assert.equal(wrapped[0].onChunk(ctx), "chunk", "onChunk untouched");
 assert.equal(typeof wrapped[0].sandbox.onFile, "function", "sandbox untouched");
 assert.equal(wrapped[0].onChunk === middleware[0].onChunk, true, "onChunk identity preserved (not wrapped)");
 
+await sleep(60);
+const defaultEntries = await readEntries();
+assert.equal(defaultEntries.length, 0, `no hook echoes by default, got ${JSON.stringify(defaultEntries)}`);
+console.log("hook echoes off by default, passthrough intact: OK");
+
 // ----------------------------------------------------------------------------
-// 4. Agent log entries: category hooks, debug level, phase + iteration data.
+// 2. Opt-in (MY_AGENT_LOG_HOOKS=1): hooks logged with category/level/phase/iteration.
 // ----------------------------------------------------------------------------
-const entries = log.getEntries();
+process.env.MY_AGENT_LOG_HOOKS = "1";
+
+wrapped[0].onConfig(ctx, { messages: ["a"] });
+await wrapped[1].onIteration(ctx);
+await sleep(60);
+
+const entries = await readEntries();
 assert.ok(entries.length >= 2, `expected >=2 hook entries, got ${entries.length}`);
 for (const entry of entries) {
   assert.equal(entry.category, "hooks", `category hooks, got ${entry.category}`);
@@ -93,15 +100,9 @@ assert.ok(
   entries.some((e) => e.message === "middleware:anonymous:onIteration"),
   `has anonymous:onIteration entry, got ${entries.map((e) => e.message).join(", ")}`
 );
-assert.ok(
-  entries.every((e) => e.message !== "middleware:test-middleware:onChunk"),
-  "onChunk must not be logged"
-);
 
 const onConfigEntry = entries.find((e) => e.message === "middleware:test-middleware:onConfig");
 assert.deepEqual(onConfigEntry.data, { phase: "beforeModel", iteration: 2 }, "phase+iteration in data");
 
-console.log("named/anonymous hooks logged with phase+iteration: OK");
-console.log("sync + async return values passed through: OK");
-console.log("onChunk / sandbox skipped (identity preserved): OK");
+console.log("opt-in hooks logged with phase+iteration: OK");
 console.log("middleware-log validation passed");

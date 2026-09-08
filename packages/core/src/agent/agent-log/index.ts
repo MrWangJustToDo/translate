@@ -1,8 +1,8 @@
 // Types
-export type { LogLevel, LogCategory, LogEntry, LogFilter } from "./types.js";
+export type { LogLevel, LogCategory, LogEntry } from "./types.js";
 
 // Schemas
-export { logLevelSchema, logCategorySchema, logEntrySchema, logFilterSchema } from "./schemas.js";
+export { logLevelSchema, logCategorySchema, logEntrySchema } from "./schemas.js";
 
 // AgentLog class
 export { AgentLog, generateLogId } from "./agent-log.js";

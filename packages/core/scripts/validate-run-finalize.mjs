@@ -9,6 +9,8 @@ import assert from "node:assert/strict";
 import { finalizeManagedAgentRun } from "../dist/dev.mjs";
 
 function createHost() {
+  // setCurrentRunId / setRun are part of the RunLifecycleHost contract (run scoping).
+  const setCurrentRunIdCalls = [];
   let turnLifecycleFinalized = false;
   let prepareAsContinuation = true;
   let clearTurnContextCalls = 0;
@@ -25,6 +27,9 @@ function createHost() {
       },
     },
     log: null,
+    setCurrentRunId(runId) {
+      setCurrentRunIdCalls.push(runId);
+    },
     beginTurnFinalize() {
       if (turnLifecycleFinalized) return false;
       turnLifecycleFinalized = true;

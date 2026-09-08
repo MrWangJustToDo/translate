@@ -20,6 +20,8 @@ const middleware = createLifecycleMiddleware({
       usageUpdated = true;
     },
     addLlmCall: () => {},
+    getLastCallCostUsd: () => 0,
+    getLastCallReasoningTokens: () => 0,
     getWindowUsage: () => ({
       inputTokens: 1,
       outputTokens: 2,

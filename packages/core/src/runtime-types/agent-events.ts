@@ -18,6 +18,7 @@ export type AgentEventType =
   | "agent:thinking"
   | "agent:tool-start"
   | "agent:tool-approval-request"
+  | "agent:tool-approval-resolved"
   | "agent:tool-end"
   | "agent:tool-error"
   | "agent:abort"

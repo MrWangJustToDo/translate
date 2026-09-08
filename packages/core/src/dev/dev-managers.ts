@@ -10,7 +10,7 @@ export {
   resolveFinishStatus,
 } from "../runtime-types/agent-status.js";
 export { AgentTelemetryBus } from "../managers/telemetry/agent-telemetry-bus.js";
-export { bridgeTelemetryToAgentLog } from "../managers/telemetry/event-log-bridge.js";
+export { bridgeTelemetryToAgentLog, summarizePayload } from "../managers/telemetry/event-log-bridge.js";
 export { emitAgentTelemetry } from "../managers/telemetry/emit-agent-telemetry.js";
 export { UsageTracker } from "../managers/telemetry/usage-tracker.js";
 export { AgentChatController } from "../managers/controllers/agent-chat-controller.js";

@@ -27,6 +27,8 @@ export interface RunLifecycleHost {
   parentId?: string;
   status: AgentStatus;
   setStatus: (status: AgentStatus) => void;
+  /** Track the active run id (log run-scoping); pass null to clear. */
+  setCurrentRunId: (runId: string | null) => void;
   recordStreamDuration: () => void;
   consumePrepareAsContinuation: () => boolean;
   clearPrepareAsContinuation: () => void;
@@ -68,6 +70,13 @@ export async function prepareManagedAgentForRun(
   const isToolContinuation = isToolContinuationPrepare(host.status, options.messages) || flaggedContinuation;
   if (!isToolContinuation || host.getStreamStartedAt() === 0) {
     host.setStreamStartedAt(Date.now());
+  }
+
+  // Run scope: one short id per user turn (tool continuations keep the same id).
+  if (!isToolContinuation) {
+    const runId = Math.random().toString(36).slice(2, 10);
+    host.setCurrentRunId(runId);
+    host.log?.setRun(runId);
   }
 
   if (!isToolContinuation && !host.parentId) {
@@ -116,6 +125,8 @@ export function finalizeManagedAgentRun(
     });
   }
   host.emitEvent("agent:stop", { reason });
+  host.setCurrentRunId(null);
+  host.log?.setRun(null);
 }
 
 export function abortManagedAgentRun(host: RunLifecycleHost, reason?: string): void {

@@ -54,18 +54,18 @@ unsubUsage();
 usage.addTotal({ inputTokens: 1, outputTokens: 1, totalTokens: 2 });
 assert.equal(usagePayloads.length, 1);
 
-// --- AgentLog ---
-const log = new AgentLog({ minLevel: "debug" });
-/** @type {unknown[]} */
-const logEntries = [];
-const unsubLog = log.on("entry", (entry) => {
-  logEntries.push(entry);
-});
-log.info("system", "hello emitter");
+// --- AgentLog (persistence-only: no in-memory emitter, entries go to the sink) ---
+import { createLogCapture, sleep } from "./helpers/log-capture.mjs";
+
+const capture = await createLogCapture("agent-emitter");
+assert.equal(typeof capture.log.on, "undefined", "AgentLog has no event emitter (persistence-only)");
+capture.log.info("system", "hello emitter");
+await sleep(60);
+const logEntries = await capture.readEntries();
 assert.equal(logEntries.length, 1);
 assert.equal(logEntries[0].message, "hello emitter");
-unsubLog();
-log.info("system", "after unsub");
-assert.equal(logEntries.length, 1);
+capture.log.info("system", "after check");
+await sleep(60);
+assert.equal((await capture.readEntries()).length, 2);
 
 console.log("agent-emitter validation passed");

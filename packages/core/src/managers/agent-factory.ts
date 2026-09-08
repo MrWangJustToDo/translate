@@ -105,9 +105,7 @@ export async function buildManagedAgent({
         : docResult.content;
       managed.setAgentDocContent(instructions, docResult.source);
     }
-    if (docResult.notice) {
-      log.debug("system", docResult.notice);
-    }
+    // docResult.notice is covered by the bridged `session:doc` event — no direct log.
   }
 
   if (!parentId && todoManager) {
@@ -125,6 +123,9 @@ export async function buildManagedAgent({
   }
 
   let skillRegistry: SkillRegistry | null = null;
+  // Extension load outcome counters — surfaced in one aggregated bootstrap entry.
+  let extensionsActive = 0;
+  let extensionsFailed = 0;
 
   if (!parentId) {
     skillRegistry = new SkillRegistry({ rootPath: fsRootPath });
@@ -132,7 +133,7 @@ export async function buildManagedAgent({
 
     const dirsToLoad = skillDirs ?? (await getDefaultSkillDirs());
     await skillRegistry.loadFromDirectories(dirsToLoad);
-    log.info("skill", `Loaded ${skillRegistry.size} skills from ${dirsToLoad.length} directories`);
+    // Skill count is logged once via the bridged `session:skill` event — no direct log.
 
     toolsRecord.task = createTaskTool({ parentAgentId: managed.id, manager });
 
@@ -163,7 +164,7 @@ export async function buildManagedAgent({
       const memoryManager = new MemoryManager({ rootPath: fsRootPath });
       await memoryManager.initialize();
       managed.setMemoryManager(memoryManager);
-      log.debug("memory", `Memory initialized, index: ${memoryManager.getIndexContent().length} bytes`);
+      // Memory init is logged once via the bridged `session:memory` event — no direct log.
     }
   }
 
@@ -191,17 +192,22 @@ export async function buildManagedAgent({
     const extensionDirs = await getDefaultExtensionDirs(config.extensionDirs);
     log.debug("system", "Extension search directories", { dirs: extensionDirs });
 
+    // Individual extension load successes are not logged — one aggregated
+    // summary entry is written after all extensions load; failures stay warns.
+
     const fromDisk = await extensionLoader.loadFromDirectories(extensionDirs);
     for (const err of fromDisk.errors) {
       log.warn("system", err.message);
+      extensionsFailed++;
     }
     for (const api of fromDisk.loaded) {
       const instance = await extensionRunner.loadExtension(api);
       // loadExtension is fail-open (state: "error" on activate failure);
-      // log the real outcome instead of always claiming "loaded".
+      // warn on the real outcome instead of always claiming "loaded".
       if (instance.state === "active") {
-        log.info("system", `Extension loaded from disk: ${api.id}`);
+        extensionsActive++;
       } else {
+        extensionsFailed++;
         log.warn(
           "system",
           `Extension failed to activate from disk "${api.id}": ${instance.error?.message ?? "unknown"}`
@@ -214,8 +220,9 @@ export async function buildManagedAgent({
         try {
           const api = await factory.create();
           await extensionRunner.loadExtension(api);
-          log.info("system", `Extension loaded from config: ${api.id}`);
+          extensionsActive++;
         } catch (err) {
+          extensionsFailed++;
           log.warn("system", `Failed to load extension from config: ${err}`);
         }
       }
@@ -229,7 +236,7 @@ export async function buildManagedAgent({
         const lspOptions = typeof config.lsp === "object" && config.lsp !== null ? config.lsp : undefined;
         const api = createLspExtension(lspOptions);
         await extensionRunner.loadExtension(api);
-        log.info("system", `Built-in extension loaded: ${api.id}`);
+        extensionsActive++;
       } catch (err) {
         log.warn("system", `Failed to load built-in LSP extension: ${err}`);
       }
@@ -243,7 +250,7 @@ export async function buildManagedAgent({
         const skillsConfig = typeof config.skills === "object" && config.skills !== null ? config.skills : undefined;
         const api = createSkillsExtension({ skillRegistry, config: skillsConfig });
         await extensionRunner.loadExtension(api);
-        log.info("system", `Built-in extension loaded: ${api.id}`);
+        extensionsActive++;
       } catch (err) {
         log.warn("system", `Failed to load built-in Skills extension: ${err}`);
       }
@@ -261,7 +268,7 @@ export async function buildManagedAgent({
           const api = createMemoryExtension({ memoryManager, config: memoryConfig });
           const instance = await extensionRunner.loadExtension(api);
           if (instance.state === "active") {
-            log.info("system", `Built-in extension loaded: ${api.id}`);
+            extensionsActive++;
           } else {
             log.warn(
               "system",
@@ -286,7 +293,7 @@ export async function buildManagedAgent({
           const api = createMcpExtension({ mcpManager, configPath: mcpConfig?.configPath ?? mcpConfigPath });
           const instance = await extensionRunner.loadExtension(api);
           if (instance.state === "active") {
-            log.info("system", `Built-in extension loaded: ${api.id}`);
+            extensionsActive++;
           } else {
             log.warn(
               "system",
@@ -322,7 +329,7 @@ export async function buildManagedAgent({
         });
         const instance = await extensionRunner.loadExtension(api);
         if (instance.state === "active") {
-          log.info("system", `Built-in extension loaded: ${api.id}`);
+          extensionsActive++;
         } else {
           log.warn(
             "system",
@@ -348,6 +355,13 @@ export async function buildManagedAgent({
   let bootstrap: SessionBootstrapContext | undefined;
   if (!parentId) {
     bootstrap = { cwd: fsRootPath };
+    // Aggregated extension summary — per-extension success lines were removed;
+    // resource counts (skills/memory/doc) come from the bridged session:* events.
+    log.info(
+      "system",
+      `Bootstrap complete: ${extensionsActive} extensions active` +
+        (extensionsFailed > 0 ? `, ${extensionsFailed} failed` : "")
+    );
   }
 
   return { managed, bootstrap };

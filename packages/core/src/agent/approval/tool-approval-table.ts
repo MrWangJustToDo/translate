@@ -14,6 +14,8 @@ export interface UpsertToolApprovalInput {
   status: ToolApprovalStatus;
   reason?: string;
   updatedAt?: number;
+  /** Tool name when the caller knows it — forwarded to the resolved callback. */
+  toolName?: string;
 }
 
 function isToolCallPart(part: UIMessage["parts"][number]): part is ToolCallPart {
@@ -28,6 +30,27 @@ function statusRank(status: ToolApprovalStatus): number {
 /** In-memory approval rows keyed by toolCallId (latest decision wins). */
 export class ToolApprovalTable {
   private readonly byToolCallId = new Map<string, ToolApprovalRecord>();
+
+  /** Invoked once per actual resolution (pending → approved/denied); not on restore. */
+  private readonly onResolved?: (resolution: {
+    approvalId: string;
+    toolCallId: string;
+    decision: "approved" | "denied";
+    reason?: string;
+    toolName?: string;
+  }) => void;
+
+  constructor(options?: {
+    onResolved?: (resolution: {
+      approvalId: string;
+      toolCallId: string;
+      decision: "approved" | "denied";
+      reason?: string;
+      toolName?: string;
+    }) => void;
+  }) {
+    this.onResolved = options?.onResolved;
+  }
 
   restore(records: readonly ToolApprovalRecord[]): void {
     this.byToolCallId.clear();
@@ -59,6 +82,18 @@ export class ToolApprovalTable {
       ...(input.status === "denied" && input.reason ? { reason: input.reason } : {}),
     };
     this.byToolCallId.set(input.toolCallId, record);
+
+    // Resolution event: only on a real pending → approved/denied transition.
+    if (input.status !== "pending" && (!existing || existing.status === "pending") && this.onResolved) {
+      this.onResolved({
+        approvalId: input.id,
+        toolCallId: input.toolCallId,
+        decision: input.status === "denied" ? "denied" : "approved",
+        reason: input.reason,
+        toolName: input.toolName,
+      });
+    }
+
     return { ...record };
   }
 }
@@ -109,6 +144,18 @@ export function findToolCallIdForApproval(messages: UIMessage[], approvalId: str
     for (const part of message.parts) {
       if (isToolCallPart(part) && part.approval?.id === approvalId) {
         return part.id;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Resolve the tool name of the part carrying `approvalId` (best-effort). */
+export function findToolCallNameForApproval(messages: UIMessage[], approvalId: string): string | undefined {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (isToolCallPart(part) && part.approval?.id === approvalId) {
+        return part.name;
       }
     }
   }

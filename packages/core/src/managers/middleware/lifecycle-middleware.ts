@@ -33,6 +33,13 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
   // Per-round timer: reset on each RUN_STARTED so tok/s counts only pure model
   // time (tool execution between rounds is excluded from the denominator).
   let roundStart = 0;
+  // Per-call observability captured for the `llm:response` timeline entry.
+  let firstTokenAt = 0;
+  let lastModel: string | undefined;
+  let lastIteration = 0;
+  let lastRoundElapsedMs = 0;
+  let lastReasoningTokens = 0;
+  let lastCostUsd = 0;
 
   return {
     name: "lifecycle",
@@ -41,9 +48,13 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
       thinkingEmitted = false;
       startTime = Date.now();
       roundStart = startTime;
+      firstTokenAt = 0;
+      lastModel = ctx.model;
+      lastIteration = ctx.iteration;
 
       deps.emitEvent?.("llm:request", {
         model: ctx.model,
+        iteration: ctx.iteration,
         messagesCount: ctx.messages.length,
         toolsCount: ctx.toolNames?.length ?? 0,
       });
@@ -53,6 +64,7 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
       // so this marks the start of a new round for per-round timing.
       if (chunk.type === "RUN_STARTED") {
         roundStart = Date.now();
+        firstTokenAt = 0;
       }
 
       if (
@@ -60,11 +72,13 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
         (chunk.type === "REASONING_MESSAGE_START" || chunk.type === "REASONING_MESSAGE_CONTENT")
       ) {
         thinkingEmitted = true;
+        if (!firstTokenAt) firstTokenAt = Date.now();
         deps.onThinking?.();
       }
 
       if (!memoryCommitted && chunk.type === "TEXT_MESSAGE_CONTENT") {
         memoryCommitted = true;
+        if (!firstTokenAt) firstTokenAt = Date.now();
         deps.onFirstModelOutput?.();
       }
 
@@ -79,17 +93,26 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
       // to the run start for rounds that never saw a RUN_STARTED.
       const roundElapsed = Date.now() - roundStart;
       deps.usage.addLlmCall(roundElapsed, parsed.outputTokens);
+      lastRoundElapsedMs = roundElapsed;
+      lastReasoningTokens = deps.usage.getLastCallReasoningTokens();
+      lastCostUsd = deps.usage.getLastCallCostUsd();
     },
     onFinish: (_ctx, info) => {
       // Rounds are already recorded per-iteration in onUsage; nothing to add
       // here. Emit telemetry with the overall run duration.
       const windowUsage = deps.usage.getWindowUsage();
       deps.emitEvent?.("llm:response", {
+        model: lastModel,
+        iteration: lastIteration,
         finishReason: info.finishReason ?? undefined,
         inputTokens: windowUsage.inputTokens,
         outputTokens: windowUsage.outputTokens,
         cacheReadTokens: windowUsage.cacheReadTokens ?? 0,
         cacheWriteTokens: windowUsage.cacheWriteTokens ?? 0,
+        reasoningTokens: lastReasoningTokens,
+        costUsd: lastCostUsd,
+        roundElapsedMs: lastRoundElapsedMs,
+        firstTokenMs: firstTokenAt > 0 ? firstTokenAt - roundStart : undefined,
         durationMs: Date.now() - startTime,
       });
     },

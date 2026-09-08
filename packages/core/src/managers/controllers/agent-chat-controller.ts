@@ -1,4 +1,4 @@
-import { findToolCallIdForApproval } from "../../agent/approval/tool-approval-table.js";
+import { findToolCallIdForApproval, findToolCallNameForApproval } from "../../agent/approval/tool-approval-table.js";
 import { assertNotCompactionSummaryInput } from "../../agent/compaction";
 import { shouldDeferMidRunQueue } from "../../agent/queue/defer-mid-run-queue.js";
 import { PendingMessageQueue, type QueueMode } from "../../agent/queue/pending-message-queue.js";
@@ -242,6 +242,7 @@ export class AgentChatController {
       toolCallId,
       status: approved ? "approved" : "denied",
       reason: approved ? undefined : reason,
+      toolName: findToolCallNameForApproval(this.channel.getMessages(), approvalId),
     });
     this.managed.statusController.reconcileWithPolicy(this.channel.getMessages(), "during-run");
     this.persistMessages("pump-complete");
@@ -430,11 +431,14 @@ export class AgentChatController {
           .filter((m) => m.role === "assistant")
           .reduce((count, m) => count + m.parts.filter((p) => p.type === "tool-call").length, 0);
         this.managed.emitEvent("turn:summary", {
+          ...(outcomeKind !== "waiting" ? { outcome: outcomeKind } : {}),
           llmCalls: llmCalls,
           toolCalls: toolCallCount,
           inputTokens: totalUsage?.inputTokens ?? 0,
           outputTokens: totalUsage?.outputTokens ?? 0,
           cacheReadTokens: totalUsage?.cacheReadTokens ?? 0,
+          cacheWriteTokens: totalUsage?.cacheWriteTokens ?? 0,
+          costUsd: this.managed.usage?.getTotalCostUsd() ?? 0,
           durationMs: Date.now() - turnStart,
         });
       }
@@ -559,6 +563,7 @@ export class AgentChatController {
           id: approvalId,
           toolCallId: toolCall.id,
           status: "approved",
+          toolName: toolCall.name,
         });
         handled = true;
       } else if (decision.action === "deny") {
@@ -568,6 +573,7 @@ export class AgentChatController {
           toolCallId: toolCall.id,
           status: "denied",
           reason: decision.reason,
+          toolName: toolCall.name,
         });
         handled = true;
       }
@@ -600,6 +606,7 @@ export class AgentChatController {
             id: approvalId,
             toolCallId: toolCall.id,
             status: "approved",
+            toolName: toolCall.name,
           });
           didApprove = true;
         }

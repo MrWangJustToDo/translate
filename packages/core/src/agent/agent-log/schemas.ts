@@ -37,14 +37,5 @@ export const logEntrySchema = z.object({
     })
     .optional(),
   tags: z.array(z.string()).optional(),
-});
-
-export const logFilterSchema = z.object({
-  levels: z.array(logLevelSchema).optional(),
-  categories: z.array(logCategorySchema).optional(),
-  tags: z.array(z.string()).optional(),
-  since: z.number().optional(),
-  until: z.number().optional(),
-  search: z.string().optional(),
-  limit: z.number().optional(),
+  run: z.string().optional(),
 });

@@ -83,12 +83,14 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
     category: "chat",
     formatMessage: (event) => {
       const d = p(event);
+      const outcome = d.outcome ? ` (${d.outcome})` : "";
       const llmCalls = d.llmCalls ?? "?";
       const toolCalls = d.toolCalls ?? "?";
       const inTokens = d.inputTokens ?? "?";
       const outTokens = d.outputTokens ?? "?";
+      const cost = typeof d.costUsd === "number" && d.costUsd > 0 ? `, $${d.costUsd.toFixed(4)}` : "";
       const ms = d.durationMs ?? "?";
-      return `Turn complete: ${llmCalls} LLM calls, ${toolCalls} tools, ${inTokens}→${outTokens} tokens, ${ms}ms`;
+      return `Turn complete${outcome}: ${llmCalls} LLM calls, ${toolCalls} tools, ${inTokens}→${outTokens} tokens${cost}, ${ms}ms`;
     },
   },
   "agent:thinking": {
@@ -137,7 +139,8 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
     category: "llm",
     formatMessage: (event) => {
       const d = p(event);
-      return `LLM request: ${d.model ?? "?"} (${d.messagesCount ?? "?"} msgs, ${d.toolsCount ?? 0} tools)`;
+      const iter = d.iteration != null ? ` [iter ${d.iteration}]` : "";
+      return `LLM request: ${d.model ?? "?"}${iter} (${d.messagesCount ?? "?"} msgs, ${d.toolsCount ?? 0} tools)`;
     },
   },
   "llm:response": {
@@ -146,11 +149,16 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
     formatMessage: (event) => {
       const d = p(event);
       const fr = d.finishReason ?? "?";
+      const iter = d.iteration != null ? ` [iter ${d.iteration}]` : "";
       const inT = d.inputTokens ?? "?";
       const outT = d.outputTokens ?? "?";
-      const cache = d.cacheHitTokens ? ` (cache +${d.cacheHitTokens})` : "";
+      const cache = d.cacheReadTokens ? ` (cache +${d.cacheReadTokens})` : "";
+      const reasoning = d.reasoningTokens ? ` (reasoning ${d.reasoningTokens})` : "";
+      const cost = typeof d.costUsd === "number" && d.costUsd > 0 ? ` $${d.costUsd.toFixed(4)}` : "";
+      const firstToken = typeof d.firstTokenMs === "number" ? `, first token ${d.firstTokenMs}ms` : "";
+      const round = typeof d.roundElapsedMs === "number" ? `, round ${d.roundElapsedMs}ms` : "";
       const ms = d.durationMs ?? "?";
-      return `LLM response: ${fr}  ${inT}→${outT} tokens${cache}  ${ms}ms`;
+      return `LLM response: ${fr}${iter}  ${inT}→${outT} tokens${cache}${reasoning}${cost}  ${ms}ms${firstToken}${round}`;
     },
   },
 
@@ -166,6 +174,15 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
     level: "info",
     category: "approval",
     formatMessage: (event) => `Approval requested: ${p(event).tool_name ?? "unknown"}`,
+  },
+  "agent:tool-approval-resolved": {
+    level: "info",
+    category: "approval",
+    formatMessage: (event) => {
+      const d = p(event);
+      const reason = d.reason ? ` — ${d.reason}` : "";
+      return `Approval resolved: ${d.tool_name ?? d.tool_call_id ?? "unknown"} (${d.decision ?? "?"})${reason}`;
+    },
   },
   "agent:tool-end": {
     level: "debug",

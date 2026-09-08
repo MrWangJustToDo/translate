@@ -168,7 +168,7 @@ setFile("CLAUDE.override.md", "# personal override\n");
     gitBranch: "main",
     gitStatus: "M file.ts",
     modeContent: '<plan_mode phase="planning">…</plan_mode>',
-    extensionTurnContext: "ext activity",
+    extensionTurnContextSections: [{ id: "my-agent-lsp", content: "ext activity" }],
     instructionContext,
   })
     .map((section) => section.content)
@@ -181,7 +181,7 @@ setFile("CLAUDE.override.md", "# personal override\n");
   assert.ok(payload.includes("<relevant_memories>"), "memory tag kept");
   assert.ok(payload.includes("<reminder>"), "todo nag tag kept");
   assert.ok(payload.includes("<plan_mode"), "plan mode tag kept");
-  assert.ok(payload.includes("<extension_context>"), "extension_context tag kept");
+  assert.ok(payload.includes("ext activity"), "extension turn-context section body present");
 }
 
 // ---------------------------------------------------------------------------

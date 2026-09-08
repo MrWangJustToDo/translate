@@ -410,7 +410,17 @@ export class ManagedAgent {
       },
     });
     this.autoMode = new AutoModeController(() => this.emitStateChange());
-    this.approvals = new ToolApprovalTable();
+    this.approvals = new ToolApprovalTable({
+      onResolved: (resolution) => {
+        this.emitEvent("agent:tool-approval-resolved", {
+          tool_call_id: resolution.toolCallId,
+          approval_id: resolution.approvalId,
+          tool_name: resolution.toolName,
+          decision: resolution.decision,
+          ...(resolution.reason ? { reason: resolution.reason } : {}),
+        });
+      },
+    });
 
     // ============================================================================
     // L1 state + local emitter (inline inits)
@@ -506,14 +516,34 @@ export class ManagedAgent {
     return this.lastStreamDurationMs;
   }
 
-  setStatus(status: AgentStatus): void {
+  setStatus(status: AgentStatus, trigger?: string): void {
+    const prev = this.currentStatus;
     if (status === "completed" || status === "aborted" || status === "error") {
       this.recordStreamDuration();
       // Terminal — any in-flight retry visibility is over.
       this.retryInfo = null;
     }
     this.currentStatus = status;
+    // Timeline: log actual transitions only (no-op sets stay silent).
+    if (prev !== status) {
+      this.log?.info("agent", `Status: ${prev} → ${status}`, {
+        from: prev,
+        to: status,
+        ...(trigger ? { trigger } : {}),
+      });
+    }
     this.emitStateChange();
+  }
+
+  private currentRunId: string | null = null;
+
+  /** Track the active run id for log run-scoping (see RunLifecycleHost). */
+  setCurrentRunId(runId: string | null): void {
+    this.currentRunId = runId;
+  }
+
+  getCurrentRunId(): string | null {
+    return this.currentRunId;
   }
 
   /** Snapshot wall-clock duration for the current turn into {@link lastStreamDurationMs}. */
@@ -1006,7 +1036,7 @@ export class ManagedAgent {
     let todoNagReminder: string | undefined;
     if (this.todoManager?.shouldNag()) {
       todoNagReminder = this.todoManager.getNagReminder(this.todoManager.getRoundsSinceUpdate());
-      this.log?.todo("Capturing nag reminder in turn context snapshot", {
+      this.log?.debug("todo", "Capturing nag reminder in turn context snapshot", {
         roundsSinceUpdate: this.todoManager.getRoundsSinceUpdate(),
       });
     }
@@ -1375,7 +1405,6 @@ export class ManagedAgent {
     this.pendingApprovalCount = 0;
     this.memory.resetState();
     this.pendingExtensionTurnContextSections = undefined;
-    this.log?.clear();
     this.usage.reset();
     this.todoManager?.reset();
     this.turnLifecycleFinalized = false;

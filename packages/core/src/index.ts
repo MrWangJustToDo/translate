@@ -80,7 +80,7 @@ export type { QueueMode } from "./agent/queue/pending-message-queue.js";
 // ============================================================================
 
 export type { TokenUsage } from "./agent/compaction";
-export type { LogEntry, LogCategory, LogLevel, LogFilter } from "./agent/agent-log";
+export type { LogEntry, LogCategory, LogLevel } from "./agent/agent-log";
 export type { TodoItem, TodoStatus, TodoPriority } from "./agent/todo";
 export type { SessionMeta, SessionData, ResumeResult, ToolApprovalRecord } from "./agent/persistence";
 

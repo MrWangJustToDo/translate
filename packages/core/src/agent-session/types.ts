@@ -10,7 +10,6 @@
  * - Creating a brand-new agent / disk session is Host.create (+ switch active id), not `clear`.
  */
 
-import type { LogEntry } from "../agent/agent-log/types.js";
 import type { ExtensionInfo } from "../agent/extension/types.js";
 import type { McpServerStatus } from "../agent/mcp/manager.js";
 import type { PlanModeState } from "../agent/plan/plan-mode-controller.js";
@@ -40,7 +39,6 @@ export const AGENT_SESSION_CHANNELS = [
   "tool",
   "summary",
   "lifecycle",
-  "log",
   "extension-ui",
   "extensions",
   "mcp",
@@ -49,7 +47,7 @@ export const AGENT_SESSION_CHANNELS = [
 
 export type AgentSessionChannel = (typeof AGENT_SESSION_CHANNELS)[number];
 
-/** Channels delivered when `subscribe()` omits `channels` (`log` is opt-in). */
+/** Channels delivered when `subscribe()` omits `channels`. */
 export const DEFAULT_AGENT_SESSION_CHANNELS: readonly AgentSessionChannel[] = [
   "state",
   "messages",
@@ -209,7 +207,6 @@ export type AgentSessionEvent =
     }
   | { channel: "summary"; payload: SummaryStreamEvent; ts: number }
   | { channel: "lifecycle"; payload: AgentEvent; ts: number }
-  | { channel: "log"; payload: LogEntry; ts: number }
   | { channel: "extension-ui"; payload: ExtensionUIEvent; ts: number }
   | { channel: "extensions"; payload: AgentSessionExtensionsSummary; ts: number }
   | { channel: "mcp"; payload: AgentSessionMcpSummary; ts: number }

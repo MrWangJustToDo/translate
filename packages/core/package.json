@@ -55,6 +55,7 @@
     "validate:emit-agent-event": "pnpm run build && node scripts/validate-emit-agent-event.mjs",
     "validate:agent-event-envelope": "pnpm run build && node scripts/validate-agent-event-envelope.mjs",
     "validate:event-log-bridge": "pnpm run build && node scripts/validate-event-log-bridge.mjs",
+    "validate:agent-log-timeline": "pnpm run build && node scripts/validate-agent-log-timeline.mjs",
     "validate:agent-log-file-sink": "pnpm run build && node scripts/validate-agent-log-file-sink.mjs",
     "validate:agent-log-host-sink": "pnpm run build && node scripts/validate-agent-log-host-sink.mjs",
     "validate:middleware-log": "pnpm run build && node scripts/validate-middleware-log.mjs",

@@ -12,6 +12,79 @@ function p(event: AgentEvent): Record<string, unknown> {
 }
 
 // ============================================================================
+// Payload summarization — logs carry sizes + previews, never full payloads
+// ============================================================================
+
+/** Keys whose values are known-large payloads (tool inputs/outputs, prompts). */
+const PAYLOAD_KEYS = new Set(["tool_input", "tool_output", "tool_result", "input", "output", "prompt", "result"]);
+
+/** Field-name suffixes that are safe to keep as-is (scalar observability data). */
+const KEEP_FIELD_RE =
+  /(?:bytes|tokens|_ms|ms$|count$|ids?$|names?$|model$|style$|status$|phase$|reason$|error$|strategy$|attempt$|summary$|description$|cwd$|usage$|cost$|durationMs$|duration_ms$|finishReason$|messageCount$|stepCount$|tokenEstimate$|prompt$)/i;
+
+const PREVIEW_MAX_CHARS = 200;
+const KEEP_STRING_MAX_CHARS = 120;
+const KEEP_STRING_HARD_MAX_CHARS = 500;
+
+function byteLengthOf(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/** Summarize any value into `<key>Bytes` + `<key>Preview` (≤200 chars). */
+function summarizeEntry(out: Record<string, unknown>, key: string, value: unknown): void {
+  const text = asText(value);
+  out[`${key}Bytes`] = byteLengthOf(text);
+  out[`${key}Preview`] = text.length > PREVIEW_MAX_CHARS ? text.slice(0, PREVIEW_MAX_CHARS) : text;
+}
+
+/**
+ * Reduce an event payload into log-safe `data`:
+ * - drops the redundant `eventType` (already expressed by the message);
+ * - known-large payload fields and unknown objects become `{field}Bytes` + `{field}Preview`;
+ * - scalar observability fields (bytes/tokens/ms/ids/names/counts/…) pass through;
+ * - long unmatched strings are summarized; kept strings are hard-capped.
+ */
+export function summarizePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === "eventType") continue;
+
+    if (PAYLOAD_KEYS.has(key)) {
+      // Normalize payload field names: tool_input→input, tool_output→output.
+      const name = key === "tool_input" ? "input" : key === "tool_output" || key === "tool_result" ? "output" : key;
+      summarizeEntry(out, name, value);
+      continue;
+    }
+
+    if (value !== null && typeof value === "object") {
+      summarizeEntry(out, key, value);
+      continue;
+    }
+
+    if (typeof value === "string") {
+      if (value.length <= KEEP_STRING_MAX_CHARS || KEEP_FIELD_RE.test(key)) {
+        out[key] = value.length > KEEP_STRING_HARD_MAX_CHARS ? value.slice(0, KEEP_STRING_HARD_MAX_CHARS) + "…" : value;
+      } else {
+        summarizeEntry(out, key, value);
+      }
+      continue;
+    }
+
+    out[key] = value;
+  }
+  return out;
+}
+
+// ============================================================================
 // Policy
 // ============================================================================
 
@@ -32,7 +105,7 @@ function resolveRule(type: AgentEventType, policy?: EventLogPolicy): EventLogRul
 }
 
 function writeLog(log: AgentLog, rule: EventLogRule, event: AgentEvent, message: string): void {
-  const data = { ...p(event), eventType: event.type };
+  const data = summarizePayload(p(event));
 
   switch (rule.level) {
     case "debug":
@@ -79,56 +152,26 @@ function logSessionMcp(log: AgentLog, event: AgentEvent): void {
 
 function logMemoryPrefetch(log: AgentLog, event: AgentEvent): void {
   const status = p(event).status as string | undefined;
-  const count = p(event).count as number | undefined;
-  switch (status) {
-    case "skip-no-manager":
-    case "skip-no-query":
-      break; // silent — not actionable
-    case "empty":
-      log.debug("memory", "Memory prefetch: none found");
-      break;
-    case "selected":
-    case "injected":
-      log.debug("memory", `Memory prefetch: ${count ?? 0} relevant memories (${p(event).byteSize ?? "?"} bytes)`);
-      break;
-    case "error":
-      log.warn("memory", `Memory prefetch failed: ${p(event).error ?? "unknown"}`);
-      break;
+  if (status === "error") {
+    log.warn("memory", `Memory prefetch failed: ${p(event).error ?? "unknown"}`);
   }
+  // selected/empty/skip outcomes are silent — not actionable per-entry.
 }
 
 function logMemoryExtract(log: AgentLog, event: AgentEvent): void {
   const status = p(event).status as string | undefined;
-  switch (status) {
-    case "start":
-      log.debug("memory", "Memory extraction starting...");
-      break;
-    case "complete":
-      log.debug("memory", `Memory extraction: ${p(event).count ?? 0} new memories`);
-      break;
-    case "empty":
-      log.debug("memory", "Memory extraction: no new memories");
-      break;
-    case "error":
-      log.warn("memory", `Memory extraction failed: ${p(event).error ?? "unknown"}`);
-      break;
-    default:
-      break; // queued, skip-short — silent
+  if (status === "error") {
+    log.warn("memory", `Memory extraction failed: ${p(event).error ?? "unknown"}`);
   }
+  // start/complete/empty/queued/skip-short are silent — not actionable per-entry.
 }
 
 function logMemoryConsolidate(log: AgentLog, event: AgentEvent): void {
   const status = p(event).status as string | undefined;
-  switch (status) {
-    case "complete":
-      log.debug("memory", `Memory consolidated: ${p(event).before ?? "?"}→${p(event).after ?? "?"} entries`);
-      break;
-    case "error":
-      log.warn("memory", `Memory consolidation failed: ${p(event).error ?? "unknown"}`);
-      break;
-    default:
-      break; // start, skip — silent
+  if (status === "error") {
+    log.warn("memory", `Memory consolidation failed: ${p(event).error ?? "unknown"}`);
   }
+  // complete/start/skip are silent — not actionable per-entry.
 }
 
 function logCompactionAuto(log: AgentLog, event: AgentEvent): void {

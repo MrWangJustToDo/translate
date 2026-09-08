@@ -322,6 +322,7 @@ async function executeSubagentRun(config: SubagentConfig, manager: AgentManager)
     }
 
     const usage = subagentManaged.usage.getTotal();
+    const durationMs = Math.max(0, Date.now() - runStartedAt);
 
     if (aggregateUsageToParent && parentManaged) {
       parentManaged.usage.addTotal(usage);
@@ -329,7 +330,23 @@ async function executeSubagentRun(config: SubagentConfig, manager: AgentManager)
 
     subagent.emitEvent(
       aborted ? "subagent:error" : "subagent:completed",
-      aborted ? { subagentId, error: finalOutput } : { subagentId, summary: finalOutput },
+      aborted
+        ? { subagentId, error: finalOutput }
+        : {
+            subagentId,
+            summary: finalOutput,
+            iterations: statusFlags.iterations,
+            durationMs,
+            usage: {
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+              totalTokens: usage.totalTokens ?? 0,
+            },
+            // Flat token fields so the Event→Log entry keeps the numbers structured.
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0,
+            totalTokens: usage.totalTokens ?? 0,
+          },
       { parentId: parentAgentId }
     );
 
@@ -343,7 +360,7 @@ async function executeSubagentRun(config: SubagentConfig, manager: AgentManager)
       output: finalOutput,
       truncated,
       iterations: statusFlags.iterations,
-      durationMs: Math.max(0, Date.now() - runStartedAt),
+      durationMs,
       usage: {
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,

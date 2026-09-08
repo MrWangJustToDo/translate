@@ -38,7 +38,7 @@ export type {
 
 export interface AgentStatusControllerDeps {
   getStatus: () => AgentStatus;
-  setStatus: (status: AgentStatus) => void;
+  setStatus: (status: AgentStatus, trigger?: string) => void;
   getError: () => string;
   setError: (error: string) => void;
   setPendingApprovalCount: (count: number) => void;
@@ -53,7 +53,11 @@ export interface ReconcileFromUIMessagesOptions {
 // Stream chunk → status
 // ============================================================================
 
-function applyChunkStatus(getStatus: () => AgentStatus, setStatus: (s: AgentStatus) => void, chunk: StreamChunk): void {
+function applyChunkStatus(
+  getStatus: () => AgentStatus,
+  setStatus: (s: AgentStatus, trigger?: string) => void,
+  chunk: StreamChunk
+): void {
   const type = chunk.type;
   const current = getStatus();
 
@@ -61,18 +65,18 @@ function applyChunkStatus(getStatus: () => AgentStatus, setStatus: (s: AgentStat
   if (current === "waiting" || current === "awaiting_user" || current === "aborted") return;
 
   if (type === "TOOL_CALL_START") {
-    setStatus("running");
+    setStatus("running", "chunk:tool");
     return;
   }
 
   if (type === "REASONING_MESSAGE_CONTENT" || type === "REASONING_MESSAGE_START") {
-    setStatus("thinking");
+    setStatus("thinking", "chunk:reasoning");
     return;
   }
 
   if (type === "TEXT_MESSAGE_CONTENT") {
     if (current === "running" || current === "thinking") {
-      setStatus("responding");
+      setStatus("responding", "chunk:text");
     }
   }
 }
@@ -101,7 +105,7 @@ export class AgentStatusController {
       status === "error" ||
       status === "aborted"
     ) {
-      this.deps.setStatus("running");
+      this.deps.setStatus("running", "run-prepare");
     }
   }
 
@@ -109,7 +113,7 @@ export class AgentStatusController {
     const status = this.deps.getStatus();
     if (status === "aborted") return;
     if (status !== "waiting" && status !== "awaiting_user") {
-      this.deps.setStatus("running");
+      this.deps.setStatus("running", "run-start");
     }
     this.deps.setError("");
   }
@@ -121,16 +125,16 @@ export class AgentStatusController {
 
   onRunFinish(finishReason?: string | null): void {
     void finishReason;
-    this.deps.setStatus(resolveFinishStatus(this.deps.getStatus(), this.deps.getError()));
+    this.deps.setStatus(resolveFinishStatus(this.deps.getStatus(), this.deps.getError()), "run-finish");
   }
 
   onRunAbort(): void {
-    this.deps.setStatus("aborted");
+    this.deps.setStatus("aborted", "run-abort");
   }
 
   onRunError(message: string): void {
     this.deps.setError(message);
-    this.deps.setStatus("error");
+    this.deps.setStatus("error", "run-error");
     this.deps.emitEvent?.("agent:stream-error", { error: message });
   }
 
@@ -141,21 +145,21 @@ export class AgentStatusController {
   onRecoveryRetry(): void {
     this.deps.setError("");
     if (this.deps.getStatus() === "error") {
-      this.deps.setStatus("running");
+      this.deps.setStatus("running", "recovery-retry");
     }
   }
 
   onExternalError(message: string, isAbort: boolean): void {
     this.deps.setError(message);
     if (!isAbort) {
-      this.deps.setStatus("error");
+      this.deps.setStatus("error", "external-error");
     }
   }
 
   onUserCancel(): void {
     const status = this.deps.getStatus();
     if (status === "running" || status === "thinking" || status === "responding" || status === "compacting") {
-      this.deps.setStatus("aborted");
+      this.deps.setStatus("aborted", "user-cancel");
     }
   }
 
@@ -163,7 +167,7 @@ export class AgentStatusController {
     kind: "auto" | "reactive" = "auto",
     data?: { retry?: number; maxRetries?: number; tokensBefore?: number }
   ): void {
-    this.deps.setStatus("compacting");
+    this.deps.setStatus("compacting", `compaction:${kind}`);
     if (kind === "reactive") {
       this.deps.emitEvent?.("compaction:reactive-start", data);
     } else {
@@ -174,7 +178,7 @@ export class AgentStatusController {
   endCompaction(): void {
     const status = this.deps.getStatus();
     if (status === "compacting") {
-      this.deps.setStatus("running");
+      this.deps.setStatus("running", "compaction-end");
     }
   }
 
@@ -184,13 +188,13 @@ export class AgentStatusController {
 
     if (count === 0) {
       if (this.deps.getStatus() === "waiting") {
-        this.deps.setStatus("running");
+        this.deps.setStatus("running", "approvals-cleared");
       }
       return;
     }
 
     if (this.deps.getStatus() !== "waiting") {
-      this.deps.setStatus("waiting");
+      this.deps.setStatus("waiting", "approvals-pending");
     }
 
     for (const approval of needsApproval) {
@@ -206,25 +210,25 @@ export class AgentStatusController {
   onBeforeToolCall(): void {
     if (this.deps.getStatus() === "waiting") {
       this.deps.setPendingApprovalCount(0);
-      this.deps.setStatus("running");
+      this.deps.setStatus("running", "before-tool-call");
     }
   }
 
   setClientToolWaiting(active: boolean): void {
     if (active) {
       if (this.deps.getStatus() !== "waiting") {
-        this.deps.setStatus("awaiting_user");
+        this.deps.setStatus("awaiting_user", "client-tool-wait");
       }
       return;
     }
     if (this.deps.getStatus() === "awaiting_user") {
-      this.deps.setStatus("completed");
+      this.deps.setStatus("completed", "client-tool-resume");
     }
   }
 
   resetToIdle(): void {
     this.deps.setError("");
-    this.deps.setStatus("idle");
+    this.deps.setStatus("idle", "reset");
   }
 
   reconcileFromUIMessages(messages: UIMessage[], options?: ReconcileFromUIMessagesOptions): void {
@@ -233,15 +237,15 @@ export class AgentStatusController {
     this.deps.setPendingApprovalCount(pendingCount);
 
     if (pendingCount > 0) {
-      this.deps.setStatus("waiting");
+      this.deps.setStatus("waiting", "reconcile");
       return;
     }
     if (hasPendingAskUser(messages)) {
-      this.deps.setStatus("awaiting_user");
+      this.deps.setStatus("awaiting_user", "reconcile");
       return;
     }
     if (this.deps.getStatus() === "waiting" || this.deps.getStatus() === "awaiting_user") {
-      this.deps.setStatus(whenClear);
+      this.deps.setStatus(whenClear, "reconcile");
     }
   }
 
@@ -266,7 +270,7 @@ export class AgentStatusController {
     if (isTerminalStatus(status)) return;
 
     if (status === "running" || status === "thinking" || status === "responding" || status === "compacting") {
-      this.deps.setStatus(this.deps.getError() ? "error" : "completed");
+      this.deps.setStatus(this.deps.getError() ? "error" : "completed", "reconcile-after-run");
     }
   }
 
@@ -293,7 +297,7 @@ export class AgentStatusController {
         if (outcome.errorMessage) {
           this.onRunError(outcome.errorMessage);
         } else {
-          this.deps.setStatus("error");
+          this.deps.setStatus("error", "apply-outcome");
         }
       } else if (outcome.errorMessage && !this.deps.getError()) {
         this.deps.setError(outcome.errorMessage);
@@ -322,13 +326,13 @@ export class AgentStatusController {
     const status = this.deps.getStatus();
     if (status === "waiting" || status === "awaiting_user") {
       // Subagent run is over — do not linger as "active" for the task panel.
-      this.deps.setStatus(this.deps.getError() ? "error" : "completed");
+      this.deps.setStatus(this.deps.getError() ? "error" : "completed", "detached-terminal");
       return;
     }
     if (isTerminalStatus(status) || status === "completed" || status === "idle") return;
 
     if (status === "running" || status === "thinking" || status === "responding" || status === "compacting") {
-      this.deps.setStatus(this.deps.getError() ? "error" : "completed");
+      this.deps.setStatus(this.deps.getError() ? "error" : "completed", "detached-terminal");
     }
   }
 }

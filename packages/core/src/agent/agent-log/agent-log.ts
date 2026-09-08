@@ -1,12 +1,7 @@
 import { getEnv } from "../../env.js";
-import { Emitter } from "../../utils/emitter.js";
 import { createSequentialIdGenerator } from "../../utils/generate-id.js";
 
-import type { AgentLogFileSinkOptions, LogCategory, LogEntry, LogFilter, LogLevel } from "./types.js";
-
-type AgentLogEvents = {
-  entry: LogEntry;
-};
+import type { AgentLogFileSinkOptions, LogCategory, LogEntry, LogLevel } from "./types.js";
 
 // ============================================================================
 // Log ID Generator
@@ -19,19 +14,26 @@ export const generateLogId = createSequentialIdGenerator("log");
 // ============================================================================
 
 /**
- * AgentLog - Debug logging for agent operations.
+ * AgentLog - persistence-only event timeline for agent operations.
+ *
+ * Every accepted entry is serialized and streamed straight to the attached
+ * file sink (JSONL, one entry per line). There is no in-memory history: the
+ * log file is the single source of log observability.
  *
  * Features:
- * 1. **Structured logs** - LogEntry with level, category, data
- * 2. **Filtering** - Filter by level, category, tags, time range
- * 3. **Real-time** - Subscribe to log events
+ * 1. **Structured entries** - LogEntry with level, category, data, error, run id
+ * 2. **Run scoping** - entries logged during an agent run share one `run` id
+ * 3. **Disk persistence** - JSONL file sink with size-based rotation
  */
 export class AgentLog {
-  private entries: LogEntry[] = [];
-  private readonly events = new Emitter<AgentLogEvents>();
   private enabled = true;
   private minLevel: LogLevel = "debug";
-  private maxEntries = 10000;
+
+  /** Short run id stamped onto entries while an agent run is in flight. */
+  private currentRun: string | null = null;
+
+  /** Active file sink's per-entry consumer, or null when no sink is attached. */
+  private sinkEntry: ((entry: LogEntry) => void) | null = null;
 
   private static readonly levelPriority: Record<LogLevel, number> = {
     debug: 0,
@@ -40,10 +42,9 @@ export class AgentLog {
     error: 3,
   };
 
-  constructor(options?: { enabled?: boolean; minLevel?: LogLevel; maxEntries?: number }) {
+  constructor(options?: { enabled?: boolean; minLevel?: LogLevel }) {
     if (options?.enabled !== undefined) this.enabled = options.enabled;
     if (options?.minLevel) this.minLevel = options.minLevel;
-    if (options?.maxEntries !== undefined) this.maxEntries = options.maxEntries;
   }
 
   // ============================================================================
@@ -58,9 +59,12 @@ export class AgentLog {
     this.minLevel = level;
   }
 
-  setMaxEntries(max: number): void {
-    this.maxEntries = max;
-    this.trimEntries();
+  /**
+   * Set the active run id: entries logged while set are stamped with `run`.
+   * Pass `null` to leave run scope (bootstrap/idle entries carry no `run`).
+   */
+  setRun(run: string | null): void {
+    this.currentRun = run;
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -94,6 +98,7 @@ export class AgentLog {
 
     if (options?.data) entry.data = options.data;
     if (options?.tags) entry.tags = options.tags;
+    if (this.currentRun) entry.run = this.currentRun;
     if (options?.error) {
       entry.error = {
         name: options.error.name,
@@ -102,9 +107,8 @@ export class AgentLog {
       };
     }
 
-    this.entries.push(entry);
-    this.trimEntries();
-    this.events.emit("entry", entry);
+    // Persistence-only: hand the entry to the attached sink (if any) and drop it.
+    this.sinkEntry?.(entry);
 
     return entry;
   }
@@ -132,132 +136,6 @@ export class AgentLog {
   }
 
   // ============================================================================
-  // Convenience Methods
-  // ============================================================================
-
-  agent(message: string, data?: Record<string, unknown>): LogEntry | null {
-    return this.info("agent", message, data);
-  }
-
-  chat(message: string, data?: Record<string, unknown>): LogEntry | null {
-    return this.debug("chat", message, data);
-  }
-
-  tool(message: string, data?: Record<string, unknown>): LogEntry | null {
-    return this.info("tool", message, data);
-  }
-
-  approval(message: string, data?: Record<string, unknown>): LogEntry | null {
-    return this.info("approval", message, data);
-  }
-
-  todo(message: string, data?: Record<string, unknown>): LogEntry | null {
-    return this.debug("todo", message, data);
-  }
-
-  skill(message: string, data?: Record<string, unknown>): LogEntry | null {
-    return this.debug("skill", message, data);
-  }
-
-  // ============================================================================
-  // Querying
-  // ============================================================================
-
-  getEntries(): LogEntry[] {
-    return [...this.entries];
-  }
-
-  getCount(): number {
-    return this.entries.length;
-  }
-
-  filter(options: LogFilter): LogEntry[] {
-    let result = [...this.entries];
-
-    if (options.levels?.length) {
-      result = result.filter((e) => options.levels!.includes(e.level));
-    }
-    if (options.categories?.length) {
-      result = result.filter((e) => options.categories!.includes(e.category));
-    }
-    if (options.tags?.length) {
-      result = result.filter((e) => e.tags?.some((t) => options.tags!.includes(t)));
-    }
-    if (options.since !== undefined) {
-      result = result.filter((e) => e.timestamp >= options.since!);
-    }
-    if (options.until !== undefined) {
-      result = result.filter((e) => e.timestamp <= options.until!);
-    }
-    if (options.search) {
-      const searchLower = options.search.toLowerCase();
-      result = result.filter(
-        (e) =>
-          e.message.toLowerCase().includes(searchLower) || JSON.stringify(e.data).toLowerCase().includes(searchLower)
-      );
-    }
-    if (options.limit !== undefined && options.limit > 0) {
-      result = result.slice(-options.limit);
-    }
-
-    return result;
-  }
-
-  recent(count = 50): LogEntry[] {
-    return this.entries.slice(-count);
-  }
-
-  errors(): LogEntry[] {
-    return this.filter({ levels: ["error"] });
-  }
-
-  issues(): LogEntry[] {
-    return this.filter({ levels: ["warn", "error"] });
-  }
-
-  // ============================================================================
-  // Subscription
-  // ============================================================================
-
-  /** Subscribe to typed log events (`entry` carries each new LogEntry). */
-  on<K extends keyof AgentLogEvents>(type: K, listener: (payload: AgentLogEvents[K]) => void): () => void {
-    return this.events.on(type, listener);
-  }
-
-  toConsole(options?: { minLevel?: LogLevel; categories?: LogCategory[] }): () => void {
-    return this.on("entry", (entry) => {
-      if (options?.minLevel && AgentLog.levelPriority[entry.level] < AgentLog.levelPriority[options.minLevel]) {
-        return;
-      }
-      if (options?.categories?.length && !options.categories.includes(entry.category)) {
-        return;
-      }
-
-      const time = new Date(entry.timestamp).toISOString().slice(11, 23);
-      const prefix = `[${time}] [${entry.level.toUpperCase().padEnd(5)}] [${entry.category}]`;
-      const dataStr = entry.data ? ` ${JSON.stringify(entry.data)}` : "";
-
-      switch (entry.level) {
-        case "debug":
-          console.debug(`${prefix} ${entry.message}${dataStr}`);
-          break;
-        case "info":
-          console.info(`${prefix} ${entry.message}${dataStr}`);
-          break;
-        case "warn":
-          console.warn(`${prefix} ${entry.message}${dataStr}`);
-          break;
-        case "error":
-          console.error(`${prefix} ${entry.message}${dataStr}`);
-          if (entry.error?.stack) {
-            console.error(entry.error.stack);
-          }
-          break;
-      }
-    });
-  }
-
-  // ============================================================================
   // File Sink (disk persistence)
   // ============================================================================
 
@@ -270,9 +148,9 @@ export class AgentLog {
 
   /**
    * Persist log entries to a JSONL file (one LogEntry per line) with size-based
-   * rotation. Silent no-op when the env fs lacks `appendFile`. Existing in-memory
-   * entries (logged before attach, e.g. session bootstrap events) are backfilled
-   * first, then new entries stream in. Returns an unsubscribe function.
+   * rotation. Silent no-op when the env fs lacks `appendFile`. Entries logged
+   * before attach are not retained — attach at session creation, before the
+   * first log call. Returns an unsubscribe function.
    */
   attachFileSink(options: AgentLogFileSinkOptions): () => void {
     let fs: ReturnType<typeof getEnv>["fs"];
@@ -370,68 +248,26 @@ export class AgentLog {
       }, flushIntervalMs);
     };
 
-    // Subscribe first so entries emitted during backfill are not missed, then
-    // prepend the already-logged entries (older entries must sort first).
-    const unsubscribe = this.on("entry", (entry) => {
+    const handleEntry = (entry: LogEntry): void => {
       buffer.push(JSON.stringify(entry));
       schedule();
-    });
-    const existing = this.entries.map((e) => JSON.stringify(e));
-    buffer.unshift(...existing);
-    if (buffer.length > 0) schedule();
+    };
 
+    // Replace any previous sink (one active sink per log).
+    this.sinkEntry = handleEntry;
     this.fileSinkDir = dir;
 
     return () => {
       disposed = true;
-      unsubscribe();
+      if (this.sinkEntry === handleEntry) {
+        this.sinkEntry = null;
+        this.fileSinkDir = null;
+      }
       if (timer) {
         clearTimeout(timer);
         timer = null;
       }
       void flush(); // best-effort final flush
     };
-  }
-
-  // ============================================================================
-  // Clear / Trim
-  // ============================================================================
-
-  clear(): void {
-    this.entries = [];
-  }
-
-  private trimEntries(): void {
-    if (this.maxEntries > 0 && this.entries.length > this.maxEntries) {
-      this.entries = this.entries.slice(-this.maxEntries);
-    }
-  }
-
-  // ============================================================================
-  // Serialization
-  // ============================================================================
-
-  toJSON(): { entries: LogEntry[]; exported: number } {
-    return {
-      entries: this.entries,
-      exported: Date.now(),
-    };
-  }
-
-  static fromJSON(data: { entries: LogEntry[] }): AgentLog {
-    const log = new AgentLog();
-    log.entries = data.entries || [];
-    return log;
-  }
-
-  toString(): string {
-    return this.entries
-      .map((e) => {
-        const time = new Date(e.timestamp).toISOString();
-        const dataStr = e.data ? ` | data: ${JSON.stringify(e.data)}` : "";
-        const errorStr = e.error ? ` | error: ${e.error.message}` : "";
-        return `[${time}] [${e.level.toUpperCase()}] [${e.category}] ${e.message}${dataStr}${errorStr}`;
-      })
-      .join("\n");
   }
 }

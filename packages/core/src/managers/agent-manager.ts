@@ -1,3 +1,4 @@
+import { AGENT_LOG_DIR } from "../agent/persistence/types.js";
 import { createSubagentTools } from "../agent/subagent/subagent-tools.js";
 import { getEnv } from "../env.js";
 import { ACTIVE_STATUSES } from "../runtime-types/agent-status.js";
@@ -144,6 +145,15 @@ export class AgentManager {
 
     this.agents.set(managed.id, managed);
     managed.manager = this;
+
+    if (!parentId && bootstrap) {
+      // Attach the JSONL log sink BEFORE bootstrap events so the session
+      // timeline includes session:start/doc/skill/memory (persistence-only
+      // log — pre-attach entries would be dropped).
+      managed.ensureSessionData();
+      const sessionId = managed.getSessionData()?.id ?? managed.id;
+      managed.getLog()?.attachFileSink({ dir: `${AGENT_LOG_DIR}/${sessionId}` });
+    }
 
     if (bootstrap) {
       await emitSessionBootstrapEvents(managed, bootstrap);
