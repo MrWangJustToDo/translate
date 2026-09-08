@@ -63,7 +63,10 @@ export const LiteDiff = memo(function LiteDiff({
   const maxOld = rows.reduce((acc, r) => Math.max(acc, r.oldLine ?? 0), 0);
   const maxNew = rows.reduce((acc, r) => Math.max(acc, r.newLine ?? 0), 0);
   const numWidth = Math.max(3, String(Math.max(maxOld, maxNew)).length);
-  const gutterWidth = numWidth * 2 + 4; // "nnnn nnnn m " (m = +/- marker)
+  // Whole-file add/delete only have one line-number side — collapse the
+  // gutter to a single column instead of reserving an empty twin.
+  const singleColumn = result.columns !== "both";
+  const gutterWidth = singleColumn ? numWidth + 3 : numWidth * 2 + 4; // "nnnn nnnn m " (m = +/- marker)
 
   if (rows.length === 0) {
     return <Text color={COLORS.muted}>{oldFile === "" && newFile === "" ? "empty file" : "no changes"}</Text>;
@@ -93,7 +96,9 @@ export const LiteDiff = memo(function LiteDiff({
           <Box key={i} flexDirection="row" width={width} flexShrink={0} backgroundColor={bg}>
             <Box flexShrink={0}>
               <Text color={COLORS.muted} dimColor backgroundColor={bg}>
-                {` ${padNum(row.oldLine, numWidth)} ${padNum(row.newLine, numWidth)} ${marker} `}
+                {singleColumn
+                  ? ` ${padNum(row.oldLine ?? row.newLine, numWidth)} ${marker} `
+                  : ` ${padNum(row.oldLine, numWidth)} ${padNum(row.newLine, numWidth)} ${marker} `}
               </Text>
             </Box>
             <Text wrap="wrap" color={COLORS.text} backgroundColor={bg}>

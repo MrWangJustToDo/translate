@@ -16,6 +16,14 @@ const MAX_CONTEXT_LINES_WITHOUT_GAP = 5;
 
 export type LiteDiffRowType = "add" | "del" | "context" | "gap";
 
+/**
+ * Gutter mode for the row grid:
+ *  - `"both"` — two line-number columns (old + new),
+ *  - `"add"`  — whole-file addition (only new numbers exist),
+ *  - `"del"`  — whole-file deletion (only old numbers exist).
+ */
+export type LiteDiffColumns = "both" | "add" | "del";
+
 export interface LiteDiffRow {
   type: LiteDiffRowType;
   oldLine?: number;
@@ -29,6 +37,8 @@ export interface LiteDiffResult {
   deletions: number;
   /** Rows hidden by the maxLines cap (0 when everything fits). */
   hidden: number;
+  /** Gutter mode; "add"/"del" collapse the twin line-number column away. */
+  columns: LiteDiffColumns;
 }
 
 export interface LiteDiffOptions {
@@ -139,7 +149,18 @@ export function createLiteDiff(oldFile: string, newFile: string, options: LiteDi
     push(row);
   }
 
-  return { rows, additions, deletions, hidden };
+  // Whole-file add/delete diffs only carry one side of line numbers; the
+  // renderer collapses the gutter to a single column in that case instead of
+  // reserving an empty twin.
+  const nonGap = rows.filter((r) => r.type !== "gap");
+  const columns: LiteDiffColumns =
+    nonGap.length > 0 && nonGap.every((r) => r.type === "add")
+      ? "add"
+      : nonGap.length > 0 && nonGap.every((r) => r.type === "del")
+        ? "del"
+        : "both";
+
+  return { rows, additions, deletions, hidden, columns };
 }
 
 /** Cheap +/- stat for headers (no row building). */

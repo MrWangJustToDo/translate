@@ -61,22 +61,42 @@ const newFile = ["a", "b", "c", "D", "e", "f", "g", "X", "Y"].join("\n");
   assert.equal(deletions, 0);
 }
 
-// New file: everything is an addition.
+// New file: everything is an addition → single-column gutter ("add").
 {
-  const { rows, additions, deletions } = createLiteDiff("", "one\ntwo");
+  const { rows, additions, deletions, columns } = createLiteDiff("", "one\ntwo");
   assert.equal(deletions, 0);
   assert.equal(additions, 2);
+  assert.equal(columns, "add");
   assert.deepEqual(
     rows.filter((r) => r.type === "add").map((r) => r.text),
     ["one", "two"]
   );
 }
 
+// Deleted file: everything is a deletion → single-column gutter ("del").
+{
+  const { rows, additions, deletions, columns } = createLiteDiff("one\ntwo", "");
+  assert.equal(additions, 0);
+  assert.equal(deletions, 2);
+  assert.equal(columns, "del");
+  assert.deepEqual(
+    rows.filter((r) => r.type === "del").map((r) => r.text),
+    ["one", "two"]
+  );
+}
+
+// Mixed edits keep both line-number columns.
+{
+  const { columns } = createLiteDiff(oldFile, newFile);
+  assert.equal(columns, "both");
+}
+
 // New file ending with newline: jsdiff appends a phantom trailing empty
 // context row (oldLine counter stuck at 0 → renders as "0 12"). It must be
 // dropped and the last row must be the final added line.
 {
-  const { rows } = createLiteDiff("", "const a = 1;\n");
+  const { rows, columns } = createLiteDiff("", "const a = 1;\n");
+  assert.equal(columns, "add");
   assert.ok(rows.length > 0);
   const last = rows[rows.length - 1];
   assert.equal(last.type, "add");
