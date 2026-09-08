@@ -62,7 +62,7 @@ export const LiteDiff = memo(function LiteDiff({
   const rows = result.rows;
   const maxOld = rows.reduce((acc, r) => Math.max(acc, r.oldLine ?? 0), 0);
   const maxNew = rows.reduce((acc, r) => Math.max(acc, r.newLine ?? 0), 0);
-  const numWidth = Math.max(3, String(Math.max(maxOld, maxNew)).length);
+  const numWidth = Math.max(1, String(Math.max(maxOld, maxNew)).length);
   // Whole-file add/delete only have one line-number side — collapse the
   // gutter to a single column instead of reserving an empty twin.
   const singleColumn = result.columns !== "both";
