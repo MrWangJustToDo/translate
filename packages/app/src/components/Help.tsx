@@ -233,9 +233,7 @@ export const Help = () => {
             </Box>
           ))}
           <Box marginTop={1}>
-            <Text color={COLORS.muted}>
-              Tip: type /help to list all commands, /shortcuts for all keyboard shortcuts.
-            </Text>
+            <Text color={COLORS.muted}>Tip: type /help to see all commands and keyboard shortcuts.</Text>
           </Box>
         </Box>
       </Box>

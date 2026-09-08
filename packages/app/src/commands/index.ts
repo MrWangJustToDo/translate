@@ -9,7 +9,6 @@ import "./models.js";
 import "./quit.js";
 import "./rename.js";
 import "./resume.js";
-import "./shortcuts.js";
 import "./theme.js";
 import "./usage.js";
 

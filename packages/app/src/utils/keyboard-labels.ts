@@ -123,7 +123,7 @@ export interface ShortcutSection {
   lines: ReadonlyArray<{ key: string; desc: string }>;
 }
 
-/** Full shortcut reference for `/shortcuts` (and docs). */
+/** Full shortcut reference for `/help` and the startup Help screen. */
 export function getKeyboardShortcutSections(): ShortcutSection[] {
   const modifiedEnter = modifiedEnterLabel();
   const newline = newlineEnterLabel();
@@ -183,7 +183,6 @@ export function formatKeyboardShortcutsHelp(): string {
     }
     lines.push("");
   }
-  lines.push(`Tip: /theme, /display, /mode, /resume open option menus after Tab/Enter.`);
   return lines.join("\n").trimEnd();
 }
 

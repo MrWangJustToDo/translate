@@ -19,7 +19,7 @@ const ROTATING_HINTS: readonly string[] = [
   `${KeyLabel.enter} submits · ${newlineEnterLabel()} inserts a newline`,
   `${approveDenyLabel()} approves or denies a tool call`,
   `${KeyLabel.slash} opens all commands`,
-  "/help lists commands · /shortcuts lists keys",
+  "/help lists commands and keyboard shortcuts",
   "/resume continues your last session",
   "/mode switches plan / auto / normal",
   `${KeyLabel.ctrlE} workspace · ${KeyLabel.ctrlT} tasks · ${KeyLabel.ctrlY} extensions`,
