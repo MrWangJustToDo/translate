@@ -40,6 +40,54 @@ interface SessionLike {
 
 const sessions = new Map<string, SessionLike>();
 
+/**
+ * Disconnect recovery: when the last SSE subscriber leaves, a run can keep
+ * going (or park in `waiting`/`awaiting_user` with nobody able to answer).
+ * After a grace period (covers the client's 500ms-30s reconnect backoff) a
+ * still-active session gets `{ type: "stop" }` so the run is finalized, the
+ * pump drains and the disk session ownership lock is releasable again.
+ */
+const SSE_STOP_GRACE_MS = 30_000;
+const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "running",
+  "thinking",
+  "responding",
+  "waiting",
+  "awaiting_user",
+  "compacting",
+]);
+const sseClients = new Map<string, number>();
+const sseStopTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function snapshotStatus(snapshot: unknown): string | undefined {
+  return (snapshot as { status?: string } | null | undefined)?.status;
+}
+
+function hasActiveRun(session: SessionLike): boolean {
+  const status = snapshotStatus(session.getSnapshot());
+  return status != null && ACTIVE_RUN_STATUSES.has(status);
+}
+
+function scheduleIdleStop(id: string, session: SessionLike): void {
+  if (sseStopTimers.has(id)) return;
+  const timer = setTimeout(() => {
+    sseStopTimers.delete(id);
+    if ((sseClients.get(id) ?? 0) > 0) return;
+    if (!hasActiveRun(session)) return;
+    diag(`no SSE subscribers for ${id} with active run — dispatching stop`);
+    void session.dispatch({ type: "stop" }).catch(() => {});
+  }, SSE_STOP_GRACE_MS);
+  sseStopTimers.set(id, timer);
+}
+
+function clearIdleStop(id: string): void {
+  const timer = sseStopTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    sseStopTimers.delete(id);
+  }
+}
+
 /** Verbose per-request diagnostics — enable with AGENT_SESSION_DEBUG=1. */
 const AGENT_SESSION_DEBUG = process.env.AGENT_SESSION_DEBUG === "1";
 
@@ -317,7 +365,8 @@ export const agentSessionRoutes = new Hono()
     return c.json(result);
   })
   .get("/:id/events", async (c) => {
-    const session = await getSession(c.req.param("id"));
+    const id = c.req.param("id");
+    const session = await getSession(id);
     if (!session) return c.json({ error: true, message: "Session not found" }, 404);
 
     const channelsParam = c.req.query("channels");
@@ -330,6 +379,22 @@ export const agentSessionRoutes = new Hono()
 
     return streamSSE(c, async (stream) => {
       let closed = false;
+      let released = false;
+      // Subscriber bookkeeping: a reconnect cancels a pending idle-stop; the
+      // last departure arms one (see SSE_STOP_GRACE_MS above).
+      sseClients.set(id, (sseClients.get(id) ?? 0) + 1);
+      clearIdleStop(id);
+      const release = (): void => {
+        if (released) return;
+        released = true;
+        const count = (sseClients.get(id) ?? 1) - 1;
+        if (count <= 0) {
+          sseClients.delete(id);
+          if (hasActiveRun(session)) scheduleIdleStop(id, session);
+        } else {
+          sseClients.set(id, count);
+        }
+      };
       const writeFrame = async (channel: string, payload: unknown): Promise<void> => {
         if (closed) return;
         await stream.writeSSE({
@@ -360,6 +425,7 @@ export const agentSessionRoutes = new Hono()
         closed = true;
         delta.close();
         unsub();
+        release();
       });
 
       // Heartbeat: comment frames keep proxies from idling out the stream and
@@ -373,11 +439,13 @@ export const agentSessionRoutes = new Hono()
       });
       clearInterval(heartbeat);
       unsub();
+      release();
     });
   })
   .delete("/:id", async (c) => {
     const id = c.req.param("id");
     sessions.delete(id);
+    clearIdleStop(id);
     dropToolBuffer(id);
     const { agentManager } = await loadCore();
     if (agentManager.getAgent(id)) {
