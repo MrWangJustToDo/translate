@@ -1,14 +1,14 @@
 // Import command files to trigger registration
 import "./clear.js";
-import "./compact.js";
-import "./appearance.js";
-import "./effort.js";
-import "./help.js";
-import "./mode.js";
-import "./models.js";
-import "./quit.js";
-import "./rename.js";
 import "./resume.js";
+import "./compact.js";
+import "./rename.js";
+import "./appearance.js";
+import "./mode.js";
+import "./effort.js";
+import "./models.js";
+import "./help.js";
+import "./quit.js";
 import "./usage.js";
 
 export {

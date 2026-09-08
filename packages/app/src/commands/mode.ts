@@ -21,13 +21,13 @@ registerCommand({
 
     if (mode === "normal") {
       return [
+        { label: "auto", value: "auto", description: "Enable auto mode — skip tool approvals (YOLO)" },
         {
           label: "plan",
           value: "plan",
           description: "Enter plan mode — explore read-only before building",
           defaultSelected: true,
         },
-        { label: "auto", value: "auto", description: "Enable auto mode — skip tool approvals (YOLO)" },
       ];
     }
 
