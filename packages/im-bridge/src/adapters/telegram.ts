@@ -26,6 +26,24 @@ const TG_MAX_TEXT = 4096;
 const CALLBACK_DATA_LIMIT = 64;
 const NOT_MODIFIED_PATTERN = /message is not modified/i;
 const PARSE_ERROR_PATTERN = /can't parse entities/i;
+/** getMe can hang indefinitely on unreachable networks — cap it so startup fails fast. */
+const TG_INIT_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 /** Bridge-level commands; Telegram-specific `/cmd@OtherBot` addressing is filtered. */
 const COMMAND_PATTERN = /^\/(new|stop)(?:@([\w-]+))?(?:\s|$)/;
@@ -125,7 +143,13 @@ export class TelegramAdapter implements ChatAdapter {
 
   async start(): Promise<void> {
     if (this.started) return;
-    await this.bot.init(); // populates botInfo.username used by mention checks
+    // populates botInfo.username used by mention checks. Fail fast (with a
+    // clear message) instead of freezing startup on an unreachable network.
+    await withTimeout(
+      this.bot.init(),
+      TG_INIT_TIMEOUT_MS,
+      "Telegram getMe timed out — check TELEGRAM_BOT_TOKEN and network reachability to api.telegram.org"
+    );
     // bot.start() long-polls until stop(); it must not be awaited here.
     void this.bot
       .start({

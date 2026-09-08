@@ -126,6 +126,9 @@ async function writeDiskCache(data: ModelsDevData): Promise<void> {
 // Fetch
 // ============================================================================
 
+/** Timeout for the models.dev fetch — metadata is best-effort, never stall startup. */
+const MODELS_DEV_FETCH_TIMEOUT_MS = 5_000;
+
 /**
  * Fetch the full models.dev dataset, using in-memory and disk caches.
  *
@@ -136,7 +139,11 @@ export async function fetchModelsDev(): Promise<ModelsDevData> {
 
   const env = getEnv();
   try {
-    const response = await env.fetch(MODELS_DEV_URL);
+    const response = await env.fetch(MODELS_DEV_URL, {
+      // An unreachable models.dev must not hang model resolution (CLI startup,
+      // `POST /api/agent`, im-bridge bootstrap) — fail over to the disk cache.
+      signal: AbortSignal.timeout(MODELS_DEV_FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
