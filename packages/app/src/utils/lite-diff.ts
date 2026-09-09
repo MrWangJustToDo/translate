@@ -37,6 +37,8 @@ export interface LiteDiffResult {
   deletions: number;
   /** Rows hidden by the maxLines cap (0 when everything fits). */
   hidden: number;
+  /** Type of the first hidden row, when any (drives the fold-line background). */
+  hiddenType?: LiteDiffRowType;
   /** Gutter mode; "add"/"del" collapse the twin line-number column away. */
   columns: LiteDiffColumns;
 }
@@ -99,6 +101,7 @@ export function createLiteDiff(oldFile: string, newFile: string, options: LiteDi
   let deletions = 0;
   const rows: LiteDiffRow[] = [];
   let hidden = 0;
+  let hiddenType: LiteDiffRowType | undefined;
 
   const bothEmpty = oldFile === "" && newFile === "";
   const patch = bothEmpty ? "" : createPatch("", oldFile, newFile, "", "", { context: CONTEXT_LINES });
@@ -120,6 +123,7 @@ export function createLiteDiff(oldFile: string, newFile: string, options: LiteDi
   const push = (row: LiteDiffRow) => {
     if (rows.length >= maxLines) {
       hidden++;
+      if (hiddenType === undefined) hiddenType = row.type;
       return;
     }
     rows.push(row);
@@ -160,7 +164,7 @@ export function createLiteDiff(oldFile: string, newFile: string, options: LiteDi
         ? "del"
         : "both";
 
-  return { rows, additions, deletions, hidden, columns };
+  return { rows, additions, deletions, hidden, hiddenType, columns };
 }
 
 /** Cheap +/- stat for headers (no row building). */

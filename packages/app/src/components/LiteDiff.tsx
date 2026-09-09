@@ -94,6 +94,11 @@ export const LiteDiff = memo(function LiteDiff({
   // Whole-file add/delete only have one line-number side — collapse the
   // gutter to a single column instead of reserving an empty twin.
   const singleColumn = result.columns !== "both";
+  // The fold line (`··· N more lines`) collapses the hidden tail, so its
+  // background previews the content that resumes below it (add → green,
+  // del → red, context → diffContext) instead of a flat default/diffContext
+  // that would sit oddly against the resumed line.
+  const hiddenBg = result.hiddenType ? rowBackground(result.hiddenType) : BG.diffContext;
 
   if (rows.length === 0) {
     return <Text color={COLORS.muted}>{oldFile === "" && newFile === "" ? "empty file" : "no changes"}</Text>;
@@ -148,7 +153,7 @@ export const LiteDiff = memo(function LiteDiff({
         );
       })}
       {result.hidden > 0 && (
-        <Box key="hidden" width={width} flexShrink={0} backgroundColor={BG.diffContext}>
+        <Box key="hidden" width={width} flexShrink={0} backgroundColor={hiddenBg}>
           <Text color={COLORS.muted} dimColor>
             {` ··· ${result.hidden} more line${result.hidden === 1 ? "" : "s"}`}
           </Text>
