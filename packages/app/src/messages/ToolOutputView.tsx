@@ -54,6 +54,8 @@ export const ToolOutputView = ({ part, uiState }: { part: ToolCallPart; uiState:
     );
   }
 
+  if (toolName === "ask_user" && uiState === "output-error") return null;
+
   const isBuiltinDetailed = DETAILED_OUTPUT_TOOLS.has(toolName);
   const output = formatToolOutput(part.output, toolName);
 
