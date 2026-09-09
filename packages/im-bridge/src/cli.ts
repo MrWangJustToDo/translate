@@ -18,6 +18,8 @@
 
 import "dotenv/config";
 
+import { appendFileSync } from "node:fs";
+
 import { TelegramAdapter } from "./adapters/telegram.js";
 import { createImBridge } from "./bridge.js";
 import { parseBridgeConfig } from "./config.js";
@@ -28,8 +30,19 @@ function log(error: unknown): void {
 
 async function main(): Promise<void> {
   const config = parseBridgeConfig();
-  const adapter = new TelegramAdapter({ botToken: config.telegramBotToken, onError: log });
-  const bridge = await createImBridge({ config, adapter, onError: log });
+  // The daemon's console is often unattended — mirror every error into
+  // `<dataDir>/bridge.log` so a misbehaving interaction row stays diagnosable.
+  const report = (error: unknown): void => {
+    log(error);
+    try {
+      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      appendFileSync(`${config.dataDir}/bridge.log`, `${new Date().toISOString()} ${message}\n`);
+    } catch {
+      // Diagnostics must never break the flow.
+    }
+  };
+  const adapter = new TelegramAdapter({ botToken: config.telegramBotToken, onError: report });
+  const bridge = await createImBridge({ config, adapter, onError: report });
   await bridge.start();
   const target = config.remoteSession ? `remote session ${config.remoteSession}` : "local mode";
   console.log(`[im-bridge] telegram bridge started → ${target}`);

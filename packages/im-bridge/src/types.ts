@@ -97,7 +97,7 @@ export type PendingInteraction =
       toolName: string;
       /** Short human summary of what is being approved. */
       question: string;
-      /** Renderer segment the buttons ride on (`${message.id}:${partIndex}`) — the tool call's own message. */
+      /** Renderer segment the buttons ride on — the tool call's own message (keyed by `tool:${part.id}`). */
       segmentKey: string;
     }
   | {
@@ -107,7 +107,7 @@ export type PendingInteraction =
       question: string;
       options: string[];
       multiSelect: boolean;
-      /** Renderer segment the buttons ride on (`${message.id}:${partIndex}`) — the tool call's own message. */
+      /** Renderer segment the buttons ride on — the tool call's own message (keyed by `tool:${part.id}`). */
       segmentKey: string;
     };
 

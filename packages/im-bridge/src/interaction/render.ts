@@ -32,7 +32,7 @@ export interface RenderedReply {
 
 /** One ordered outbound unit of a run: a text part or a tool status line. */
 export interface RunSegment {
-  /** Stable identity: `${message.id}:${partIndex}` — parts stream append-only. */
+  /** Stable identity: tool parts key by `tool:<partId>`, text by `${message.id}:${partIndex}`. */
   key: string;
   kind: "text" | "tool";
   /** Rendered text (raw text content / tool status line). */
@@ -243,7 +243,7 @@ export function scanPendingInteractions(messages: UIMessage[]): PendingInteracti
     if (message.role !== "assistant") continue;
     for (const [partIndex, part] of message.parts.entries()) {
       if (!isToolCallPart(part)) continue;
-      const segmentKey = `${message.id}:${partIndex}`;
+      const segmentKey = toolSegmentKey(message.id, partIndex, part.id);
       if (part.name === ASK_USER_TOOL && part.state === "input-complete" && part.output === undefined) {
         const input = parseInputJson(part) ?? {};
         pending.push({
@@ -271,6 +271,19 @@ export function scanPendingInteractions(messages: UIMessage[]): PendingInteracti
 }
 
 /**
+ * Stable identity for a tool-call segment. The local pipeline rebuilds message
+ * ids (and splits parallel tool calls across messages) as rounds continue after
+ * an approval, so `messageId:partIndex` keying orphanes posted tool rows. The
+ * tool-call id (`call_*`/`approval_call_*`) is stable across those rebuilds, so
+ * keying by it keeps a row's segment, registration, and follow-up updates on the
+ * same object. Text parts have no stable id and are already terminal once
+ * posted, so they keep the message-scoped key.
+ */
+export function toolSegmentKey(messageId: string, partIndex: number, partId: string | undefined): string {
+  return partId ? `tool:${partId}` : `${messageId}:${partIndex}`;
+}
+
+/**
  * Project the current run onto ordered outbound segments — assistant text and
  * tool status lines alternate exactly as the app's message view renders them.
  * The renderer posts each segment as its own chat message in this order.
@@ -293,7 +306,7 @@ export function renderRunSegments(messages: UIMessage[]): RunSegment[] {
           (part.name === ASK_USER_TOOL && part.output === undefined) ||
           (part.approval?.needsApproval === true && part.approval.approved === undefined);
         segments.push({
-          key: `${message.id}:${partIndex}`,
+          key: toolSegmentKey(message.id, partIndex, part.id),
           kind: "tool",
           text: toolStatusLine(part),
           done: part.output !== undefined || part.approval?.approved === false,

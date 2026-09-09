@@ -16,6 +16,8 @@
 
 import { isActiveStatus } from "@my-agent/core";
 import { createRemoteAgentSessionHost } from "@my-agent/server/client";
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { AccessControl } from "./access.js";
 import { decodeButtonPayload, PendingInteractionStore, type PendingRecord } from "./interaction/pending.js";
@@ -25,7 +27,7 @@ import { SessionResolver, sessionKeyOf } from "./session-resolver.js";
 import { RunRenderer } from "./streaming/run-renderer.js";
 
 import type { BridgeConfig } from "./config.js";
-import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage } from "./types.js";
+import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage, PendingInteraction } from "./types.js";
 import type { AgentSession, AgentSessionCommand, AgentSessionHost } from "@my-agent/core";
 import type { UIMessage } from "@tanstack/ai";
 
@@ -269,12 +271,13 @@ export class BridgeRuntime {
       registered: new Set(),
     };
     this.cycles.set(chatKey, cycle);
-    // Typing heartbeat: sendChatAction expires after ~5s — re-send while the
-    // run works but nothing has been posted yet, so the chat shows "typing…"
-    // during thinking/tool phases instead of looking dead.
+    // Typing heartbeat: sendChatAction expires after ~5s — re-send for the
+    // WHOLE run (until the cycle retires). Output is non-streaming, so content
+    // posts are sparse: stopping at the first posted segment left the chat
+    // looking dead through the LLM's long responding/tool stretches.
     if (this.adapter.setTyping) {
       cycle.typingTimer = setInterval(() => {
-        if (cycle.closed || cycle.renderer?.hasOutput) {
+        if (cycle.closed) {
           if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
           cycle.typingTimer = null;
           return;
@@ -290,6 +293,7 @@ export class BridgeRuntime {
           chat: msg.chat,
           placeholderRef: reply,
           onError: this.onError,
+          onDebug: (message) => this.diag(message),
         });
         cycle.renderer = renderer;
         const buffered = cycle.bufferedMessages;
@@ -376,6 +380,9 @@ export class BridgeRuntime {
         requestId
       );
       cycle.renderer.setButtons(interaction.segmentKey, this.pending.buttonsFor(interaction, requestId));
+      this.diag(
+        `interaction registered id=${id} r=${requestId} segment=${interaction.segmentKey} kind=${interaction.kind}`
+      );
     }
   }
 
@@ -494,11 +501,14 @@ export class BridgeRuntime {
       const session = this.activeSessions.get(record.chatKey);
       await cb.ack();
       // Feedback FIRST: applyInteraction's dispatch blocks until the rest of
-      // the run finishes (local mode). Drop the buttons immediately (the row
-      // stops looking actionable) and submit in the background; the tool line
-      // itself updates via the run events (⏸ → running → ✓/✗ denied);
-      // failures surface via onError.
-      this.cycles.get(record.chatKey)?.renderer?.setButtons(record.pending.segmentKey, undefined);
+      // the run finishes (local mode), and the run events that re-render the
+      // line take another round-trip. Settle the row immediately (buttons
+      // dropped + outcome shown) and submit in the background; failures
+      // surface via onError.
+      this.diag(
+        `button click a=${payload.a} r=${payload.r} kind=${record.pending.kind} segment=${record.pending.segmentKey} session=${session ? "yes" : "no"}`
+      );
+      this.settleInteractionRow(record, outcomeFor(record.pending, payload));
       void this.applyInteraction(session, record, payload).catch((error) => this.onError(error));
     } catch (error) {
       this.onError(error);
@@ -536,9 +546,44 @@ export class BridgeRuntime {
     });
   }
 
+  /**
+   * Settle an interaction row in place: buttons dropped + outcome shown on the
+   * tool's own message (the only allowed in-place updates besides button
+   * drops). No-op when the cycle/renderer is gone — the row stays as history.
+   */
+  private settleInteractionRow(record: PendingRecord, outcome: string): void {
+    const pending = record.pending;
+    const line =
+      pending.kind === "approval"
+        ? `📎 ${pending.question} · ${outcome}`
+        : `📎 ask_user · ${pending.question} · ${outcome}`;
+    const renderer = this.cycles.get(record.chatKey)?.renderer;
+    const settled = renderer?.settle(pending.segmentKey, line) ?? false;
+    this.diag(
+      `settle ${pending.kind} segment=${pending.segmentKey} outcome=${JSON.stringify(outcome)} applied=${settled}${renderer ? "" : " renderer=absent"}`
+    );
+  }
+
+  /**
+   * Best-effort diagnostic line into `<dataDir>/bridge.log` — the daemon's
+   * console is often unattended, and renderer-side edit failures surface only
+   * here; without a file sink a frozen row is undiagnosable after the fact.
+   */
+  private diag(message: string): void {
+    try {
+      appendFileSync(join(this.config.dataDir, "bridge.log"), `${new Date().toISOString()} ${message}\n`);
+    } catch {
+      // Diagnostics must never break the flow.
+    }
+  }
+
   /** TTL expiry → auto-deny (approval) / timeout answer (ask_user). */
   private async expireInteraction(record: PendingRecord): Promise<void> {
     try {
+      // Row feedback is independent of session availability — buttons must
+      // never linger on an expired interaction.
+      if (record.pending.kind === "approval") this.settleInteractionRow(record, "✗ denied (timed out)");
+      else this.settleInteractionRow(record, "▸ (timed out)");
       const session = this.activeSessions.get(record.chatKey);
       if (!session) return;
       if (record.pending.kind === "approval") {
@@ -620,4 +665,10 @@ export async function createImBridge(options: BridgeRuntimeOptions): Promise<Bri
     }
   }
   return new BridgeRuntime({ ...options, config, host });
+}
+
+/** Outcome label shown on the interaction row right after an answer. */
+function outcomeFor(pending: PendingInteraction, payload: NonNullable<ReturnType<typeof decodeButtonPayload>>): string {
+  if (pending.kind === "approval") return payload.a === "y" ? "✓ approved" : "✗ denied";
+  return `▸ ${pending.options[payload.i ?? -1] ?? "(no answer)"}`;
 }

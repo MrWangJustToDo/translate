@@ -33,10 +33,12 @@ export interface RunRendererOptions {
   /** The "⏳" placeholder — claimed (edited in place) by the first posted segment. */
   placeholderRef: SentMessageRef;
   onError: (error: unknown) => void;
+  /** Diagnostic channel (bridge logs it to `<dataDir>/bridge.log`). */
+  onDebug?: (message: string) => void;
 }
 
 interface SegmentState {
-  /** Stable identity: `${message.id}:${partIndex}` — parts stream append-only. */
+  /** Stable identity: tool parts key by `tool:<partId>`, text by `${message.id}:${partIndex}`. */
   key: string;
   kind: "text" | "tool";
   /** Latest rendered text. */
@@ -46,6 +48,8 @@ interface SegmentState {
   sealed: boolean;
   /** Tool only: posted while awaiting an interaction — eligible for follow-up edits. */
   awaitingResolution: boolean;
+  /** Tool only: set by settle() when a click/TTL resolved the row — forces the follow-up edit even if the projection flipped `done` before posting (see r1 race). */
+  settled?: boolean;
   /** Tool only: no further state change expected (output landed / denied). */
   done: boolean;
   /** Tool only: awaiting approval or an ask_user answer. */
@@ -61,6 +65,7 @@ export class RunRenderer {
   private readonly chat: ChatTarget;
   private readonly placeholderRef: SentMessageRef;
   private readonly onError: (error: unknown) => void;
+  private readonly onDebug: (message: string) => void;
 
   /** Insertion order = first-appearance order = the run's actual part order. */
   private readonly segments = new Map<string, SegmentState>();
@@ -74,11 +79,7 @@ export class RunRenderer {
     this.chat = options.chat;
     this.placeholderRef = options.placeholderRef;
     this.onError = options.onError;
-  }
-
-  /** True once any segment content has been posted to the chat. */
-  get hasOutput(): boolean {
-    return this.placeholderClaimed;
+    this.onDebug = options.onDebug ?? (() => {});
   }
 
   /**
@@ -99,6 +100,7 @@ export class RunRenderer {
           text: segment.text,
           sealed: false,
           awaitingResolution: false,
+          settled: false,
           done: segment.done,
           pending: segment.pending,
           ref: null,
@@ -116,10 +118,10 @@ export class RunRenderer {
   }
 
   /**
-   * Attach (or clear) buttons on a tool segment's message — the approval /
-   * ask_user flow renders ON the tool call's own message, not as a separate
-   * one. Call after `sync` so the segment exists (interactions are scanned
-   * from the same run projection).
+   * Attach buttons on a tool segment's message — the approval / ask_user flow
+   * renders ON the tool call's own message, not as a separate one. Call after
+   * `sync` so the segment exists (interactions are scanned from the same run
+   * projection).
    */
   setButtons(segmentKey: string, buttons: Button[] | undefined): void {
     const segment = this.segments.get(segmentKey);
@@ -128,6 +130,46 @@ export class RunRenderer {
     // A lingering clickable row after a click is misleading — reconcile now
     // instead of waiting for the next run event.
     this.reconcile();
+  }
+
+  /**
+   * Immediate feedback for an answered interaction (click or TTL expiry): drop
+   * the buttons and show the outcome on the tool's own message right away —
+   * the run's own events re-render the line (running → ✓) when they arrive.
+   * This is an interaction message, so the in-place edit is allowed.
+   *
+   * Returns whether the segment was found and settled (diagnostics: a `false`
+   * here means the click landed on a row this renderer no longer tracks).
+   */
+  settle(segmentKey: string, text: string): boolean {
+    const segment = this.segments.get(segmentKey);
+    // Apply when still awaiting resolution OR the row still carries buttons — a
+    // frozen row with a stale flag is worth settling so the user gets feedback.
+    // Only skip when the row is already terminal AND button-less (a stale click).
+    if (!segment || this.closed || segment.kind !== "tool") {
+      // Diagnose WHY the click missed — a frozen row with an unexplained miss
+      // is undiagnosable after the fact.
+      const known = this.segments.get(segmentKey);
+      const keySample = [...this.segments.keys()].slice(-4).join(", ");
+      this.onDebug(
+        `settle MISS key=${segmentKey} exists=${known !== undefined} closed=${this.closed} kind=${known?.kind ?? "-"} awaiting=${known?.awaitingResolution ?? "-"} buttons=${known?.buttons === undefined ? "none" : "set"} mapSize=${this.segments.size} recentKeys=[${keySample}]`
+      );
+      return false;
+    }
+    const active = segment.awaitingResolution || segment.buttons !== undefined;
+    if (!active) {
+      const known = this.segments.get(segmentKey);
+      const keySample = [...this.segments.keys()].slice(-4).join(", ");
+      this.onDebug(
+        `settle MISS key=${segmentKey} exists=${known !== undefined} closed=${this.closed} kind=${known?.kind ?? "-"} awaiting=${known?.awaitingResolution ?? "-"} buttons=${known?.buttons === undefined ? "none" : "set"} mapSize=${this.segments.size} recentKeys=[${keySample}]`
+      );
+      return false;
+    }
+    segment.buttons = undefined;
+    if (segment.text !== text) segment.text = text;
+    segment.settled = true;
+    this.reconcile();
+    return true;
   }
 
   /**
@@ -144,21 +186,28 @@ export class RunRenderer {
     this.closed = true;
     this.enqueue(async () => {
       for (const segment of this.segments.values()) {
-        if (segment.kind === "text") {
-          if (segment.ref !== null || segment.text.trim().length === 0) continue;
-          for (const chunk of splitMessage(segment.text, this.adapter.caps.maxTextLength)) {
-            segment.ref = await this.post(chunk, undefined);
+        try {
+          if (segment.kind === "text") {
+            if (segment.ref !== null || segment.text.trim().length === 0) continue;
+            for (const chunk of splitMessage(segment.text, this.adapter.caps.maxTextLength)) {
+              segment.ref = await this.post(chunk, undefined);
+            }
+          } else if (segment.ref === null) {
+            const isInteraction = segment.buttons !== undefined;
+            segment.ref = await this.post(segment.text, isInteraction ? segment.buttons : undefined);
+            segment.awaitingResolution = isInteraction || segment.pending;
+            segment.lastText = segment.text;
+            segment.lastButtons = segment.buttons;
+          } else if ((segment.awaitingResolution || segment.settled) && segment.done) {
+            await this.edit(segment.ref, segment.text, undefined);
+            segment.awaitingResolution = false;
+            segment.lastText = segment.text;
+            segment.lastButtons = undefined;
           }
-        } else if (segment.ref === null) {
-          segment.ref = await this.post(segment.text, segment.pending ? segment.buttons : undefined);
-          segment.awaitingResolution = segment.pending;
-          segment.lastText = segment.text;
-          segment.lastButtons = segment.buttons;
-        } else if (segment.awaitingResolution && segment.done) {
-          await this.edit(segment.ref, segment.text, undefined);
-          segment.awaitingResolution = false;
-          segment.lastText = segment.text;
-          segment.lastButtons = undefined;
+        } catch (error) {
+          // Terminal flush is best-effort per segment — one failure must not
+          // drop the remaining segments' content.
+          this.onError(error);
         }
       }
       if (!this.placeholderClaimed) {
@@ -205,29 +254,58 @@ export class RunRenderer {
 
   private async flush(): Promise<void> {
     for (const segment of this.segments.values()) {
-      if (segment.kind === "text") {
-        if (segment.ref !== null || !segment.sealed || segment.text.trim().length === 0) continue;
-        segment.ref = await this.post(segment.text, undefined);
-        segment.lastText = segment.text;
-      } else if (segment.ref === null) {
-        // Post immediately when an interaction needs buttons; otherwise wait
-        // for completion so a "running" line never freezes mid-state.
-        if (!segment.pending && !segment.done) continue;
-        segment.ref = await this.post(segment.text, segment.pending ? segment.buttons : undefined);
-        segment.awaitingResolution = segment.pending;
-        segment.lastText = segment.text;
-        segment.lastButtons = segment.buttons;
-      } else if (segment.awaitingResolution) {
-        // The only in-place edits: an interaction message progressing toward
-        // its terminal state (⏸ → running → ✓) and dropping its buttons.
-        const done = segment.done;
-        if (!done && segment.text === segment.lastText && segment.buttons === segment.lastButtons) continue;
-        await this.edit(segment.ref, segment.text, done ? undefined : segment.buttons);
-        segment.lastText = segment.text;
-        segment.lastButtons = done ? undefined : segment.buttons;
-        if (done) segment.awaitingResolution = false;
+      try {
+        await this.flushSegment(segment);
+      } catch (error) {
+        // One failing segment must not starve the rest of the run's output:
+        // keep it dirty (lastSent/lastButtons untouched) so later reconciles
+        // retry it, and let the remaining segments render.
+        this.onError(error);
       }
     }
+  }
+
+  private async flushSegment(segment: SegmentState): Promise<void> {
+    if (segment.kind === "text") {
+      if (segment.ref !== null || !segment.sealed || segment.text.trim().length === 0) return;
+      segment.ref = await this.post(segment.text, undefined);
+      segment.lastText = segment.text;
+      return;
+    }
+    if (segment.ref === null) {
+      // Post immediately when an interaction needs buttons; otherwise wait
+      // for completion so a "running" line never freezes mid-state.
+      // An interaction (buttons attached) is ALWAYS awaiting its user answer
+      // even if the projection momentarily reads `done` (the r1 race: the
+      // part resolved between setButtons and the flush) — button + await so
+      // a subsequent click can always settle the row.
+      const isInteraction = segment.buttons !== undefined;
+      if (!isInteraction && !segment.pending && !segment.done) return;
+      segment.ref = await this.post(segment.text, isInteraction ? segment.buttons : undefined);
+      segment.awaitingResolution = isInteraction || segment.pending;
+      segment.lastText = segment.text;
+      segment.lastButtons = segment.buttons;
+      return;
+    }
+    // Skip only when the row is not an interaction AND wasn't settled AND has
+    // no buttons to drop — a settled row (click/TTL) or one still carrying
+    // buttons must be edited.
+    if (!segment.awaitingResolution && !segment.settled && segment.buttons === undefined) {
+      return;
+    }
+    // The only in-place edits: an interaction message progressing toward
+    // its terminal state (⏸ → running → ✓) and dropping its buttons. Edit only
+    // when the content or buttons actually changed (a done row already flush-
+    // edited once must not re-edit every reconcile).
+    const done = segment.done;
+    if (segment.text === segment.lastText && segment.buttons === segment.lastButtons) return;
+    const showButtons = !done && segment.buttons !== undefined;
+    await this.edit(segment.ref, segment.text, showButtons ? segment.buttons : undefined);
+    segment.lastText = segment.text;
+    segment.lastButtons = showButtons ? segment.buttons : undefined;
+    if (done || !showButtons) segment.buttons = undefined;
+    segment.settled = false;
+    if (done) segment.awaitingResolution = false;
   }
 
   /** Post a segment message: the first one claims the placeholder via edit. */

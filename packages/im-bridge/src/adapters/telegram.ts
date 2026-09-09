@@ -243,9 +243,14 @@ export class TelegramAdapter implements ChatAdapter {
 
   async editMessage(target: ChatTarget, messageId: string, text: string, options?: SendOptions): Promise<void> {
     await withFloodRetry(async () => {
+      // reply_markup must ALWAYS be explicit: editMessageText keeps the
+      // existing inline keyboard when the parameter is omitted, so a
+      // button-less edit (answered interaction / terminal tool line) would
+      // silently leave the stale buttons clickable. An empty keyboard clears.
+      const replyMarkup = options?.buttons ? toKeyboard(options.buttons) : { inline_keyboard: [] };
       try {
         await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(toTelegramHtml(text)), {
-          reply_markup: toKeyboard(options?.buttons),
+          reply_markup: replyMarkup,
           parse_mode: "HTML",
         });
       } catch (error) {
@@ -253,7 +258,7 @@ export class TelegramAdapter implements ChatAdapter {
         if (error instanceof Error && NOT_MODIFIED_PATTERN.test(error.message)) return;
         if (error instanceof Error && PARSE_ERROR_PATTERN.test(error.message)) {
           await this.bot.api.editMessageText(target.chatId, Number(messageId), clamp(text), {
-            reply_markup: toKeyboard(options?.buttons),
+            reply_markup: replyMarkup,
           });
           return;
         }

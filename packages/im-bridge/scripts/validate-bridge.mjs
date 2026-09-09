@@ -13,11 +13,12 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { createImBridge, parseBridgeConfig, SessionResolver, splitMessage } = await import("../dist/index.mjs");
+const { createImBridge, parseBridgeConfig, SessionResolver, splitMessage, RunRenderer } =
+  await import("../dist/index.mjs");
 
 // ============================================================================
 // Fakes
@@ -232,13 +233,24 @@ async function testApprovalButton() {
   const command = session.dispatched.find((cmd) => cmd.type === "respondApproval");
   assert.equal(command.approvalId, "ap1");
   assert.equal(command.approved, true);
-  // Click feedback: the buttons drop from the tool message immediately.
+  // Click feedback: buttons drop AND the outcome shows on the same message
+  // immediately (before any run event arrives).
   await waitFor(
-    () => adapter.edits.some((entry) => entry.messageId === approvalEntry.messageId && entry.buttons === undefined),
+    () =>
+      adapter.edits.some(
+        (entry) =>
+          entry.messageId === approvalEntry.messageId &&
+          entry.buttons === undefined &&
+          entry.text.includes("✓ approved")
+      ),
     2000,
-    "buttons dropped after click"
+    "settled row after click"
   );
-  console.log("✓ approval button on the tool call's message → respondApproval(approved=true), buttons dropped");
+  // Diagnostics: the click and its settle outcome land in <dataDir>/bridge.log.
+  const diagLog = readFileSync(join(tmpBase, "default", "bridge.log"), "utf8");
+  assert.ok(diagLog.includes("button click a=y"), "click logged");
+  assert.ok(/settle approval .*applied=true/.test(diagLog), "settle outcome logged");
+  console.log("✓ approval click → respondApproval(true), row settled in place (✓ approved, buttons dropped)");
 }
 
 async function testAskUserButton() {
@@ -271,7 +283,16 @@ async function testAskUserButton() {
   assert.equal(command.toolCallId, "tc2");
   assert.equal(command.output.answer, "Beta");
   assert.equal(command.output.hasOptions, true);
-  console.log("✓ ask_user option button → dispatch addToolResult(answer)");
+  await waitFor(
+    () =>
+      adapter.edits.some(
+        (entry) =>
+          entry.messageId === askEntry.messageId && entry.buttons === undefined && entry.text.includes("▸ Beta")
+      ),
+    2000,
+    "settled row after ask_user answer"
+  );
+  console.log("✓ ask_user option button → addToolResult(answer), row settled in place (▸ Beta)");
 }
 
 async function testOneMessagePerApproval() {
@@ -317,7 +338,12 @@ async function testTtlAutoDeny() {
   assert.equal(command.approvalId, "ap1");
   assert.equal(command.approved, false);
   assert.equal(command.reason, "timed out");
-  console.log("✓ pending approval TTL expiry → auto-deny (approved=false, reason=timed out)");
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.buttons === undefined && entry.text.includes("✗ denied (timed out)")),
+    2000,
+    "settled row after TTL expiry"
+  );
+  console.log("✓ pending approval TTL expiry → auto-deny + row settled (✗ denied (timed out))");
 }
 
 async function testAllowlistRejection() {
@@ -456,6 +482,149 @@ async function testNoStaleInitialRender() {
  * actual part order; running tools wait; the unsealed final answer posts only
  * at finalize.
  */
+async function testRebuildMessageId() {
+  const { adapter, host } = await startBridge({ IM_BRIDGE_APPROVAL_TTL_MS: "5000" });
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "run tests", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  // First payload: tool-call `tc1` lives in message m1 at part index 1 (thinking
+  // prepended), pending approval. Row posts with buttons.
+  session.state.messages = [
+    { role: "assistant", id: "m1", parts: [{ type: "text", content: "thinking" }, approvalPart()] },
+  ];
+  session.emit("messages", session.state.messages);
+  await waitFor(() => adapter.log.some((entry) => entry.buttons?.length > 0), 2000, "approval row");
+  const sendsBeforeRebuild = adapter.sent.length;
+
+  // Rebuild: the SAME tool-call id `tc1` appears in a NEW message `m2` at part
+  // index 0 — the local pipeline's message-id/part-index churn around approval.
+  // With a stable `tool:<id>` key this updates the SAME segment in place; a
+  // message-scoped key would orphan the posted row and emit a duplicate send.
+  session.state.messages = [{ role: "assistant", id: "m2", parts: [approvalPart()] }];
+  session.emit("messages", session.state.messages);
+  await waitFor(
+    () => adapter.log.filter((entry) => entry.buttons?.length > 0).length === 1,
+    2000,
+    "single row after rebuild"
+  );
+  // No duplicate send: the number of sends is unchanged after the rebuild.
+  assert.equal(adapter.sent.length, sendsBeforeRebuild, "rebuild must not re-send a duplicate row");
+
+  // Now mark the part approved+output (simulating the resumed pipeline after the
+  // approval); the same segment should edit to a terminal line and drop buttons.
+  session.state.messages = [
+    {
+      role: "assistant",
+      id: "m2",
+      parts: [
+        {
+          type: "tool-call",
+          id: "tc1",
+          name: "run_command",
+          arguments: JSON.stringify({ command: "npm test" }),
+          state: "tool-result",
+          approval: { id: "ap1", needsApproval: true, approved: true },
+          output: "ok",
+        },
+      ],
+    },
+  ];
+  session.emit("messages", session.state.messages);
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.buttons === undefined && entry.text.includes("✓")),
+    2000,
+    "resolved row edited in place (buttons dropped)"
+  );
+
+  // settle by the stable key still applies after the rebuild.
+  assert.ok(adapter.log.every((entry) => entry.buttons === undefined || entry.buttons.length > 0));
+  console.log(
+    "✓ message-id/part-index rebuild keeps the tool row (no duplicate, in-place update, settle by stable key)"
+  );
+}
+
+async function testSettleAfterPostDoneRace() {
+  // Regression for the real run where an approval row was posted with
+  // `done=true` (the part resolved between setButtons and the flush), so
+  // `awaitingResolution` became false and the post-settle edit was skipped —
+  // the row froze. The fix: a segment with buttons attached (an interaction)
+  // always posts as awaiting, and a settled row forces the edit. Here we
+  // drive the renderer directly through that exact race and assert the row
+  // is edited (buttons dropped + outcome shown) after the click.
+  const chat = { chatId: "chat1", chatType: "private" };
+  const placeholderRef = { chat, messageId: "p1" };
+  const edits = [];
+  const posts = [];
+  let counter = 0;
+  const adapter = {
+    caps: { markdown: false, editMessage: true, buttons: true, maxTextLength: 4096, streaming: "edit" },
+    async editMessage(c, id, text, options) {
+      edits.push({ messageId: id, text, buttons: options?.buttons });
+    },
+    async sendText(c, text, options) {
+      const ref = { chat: c, messageId: `m${++counter}` };
+      posts.push({ messageId: ref.messageId, text, buttons: options?.buttons });
+      return ref;
+    },
+    async sendButtons(c, text, buttons) {
+      return this.sendText(c, text, { buttons });
+    },
+    async setTyping() {},
+  };
+  const renderer = new RunRenderer({
+    adapter,
+    chat,
+    placeholderRef,
+    onError: () => {},
+  });
+
+  const pendingPart = {
+    type: "tool-call",
+    id: "tc1",
+    name: "run_command",
+    arguments: JSON.stringify({ command: "npm test" }),
+    state: "input-complete",
+    approval: { id: "ap1", needsApproval: true, approved: undefined },
+    output: undefined,
+  };
+  // 1) part is PENDING when the interaction registers.
+  renderer.sync([{ role: "assistant", id: "m1", parts: [pendingPart] }]);
+  renderer.setButtons("tool:tc1", [{ label: "✅ Approve", data: "{}" }]);
+  await waitFor(() => edits.some((e) => e.buttons?.length > 0), 2000, "post as pending interaction");
+
+  // 2) the part resolves to DONE before the flush — the race that used to make
+  //    `awaitingResolution=false`.
+  renderer.sync([
+    {
+      role: "assistant",
+      id: "m1",
+      parts: [
+        {
+          type: "tool-call",
+          id: "tc1",
+          name: "run_command",
+          arguments: JSON.stringify({ command: "npm test" }),
+          state: "tool-result",
+          approval: { id: "ap1", needsApproval: true, approved: true },
+          output: "ok",
+        },
+      ],
+    },
+  ]);
+
+  // 3) the click settles the row; the follow-up edit must drop buttons and
+  //    show the outcome even though the projection read `done` at post time.
+  const settled = renderer.settle("tool:tc1", "📎 run_command · npm test · ✓ approved");
+  assert.equal(settled, true, "settle applies on the interaction row");
+  await waitFor(
+    () => edits.some((e) => e.buttons === undefined && e.text.includes("✓ approved")),
+    2000,
+    "row edited after settle (buttons dropped, outcome shown)"
+  );
+  console.log("✓ approval posted in a done race still settles in place (buttons dropped, outcome shown)");
+}
+
 async function testOrderedSegments() {
   const { adapter, host } = await startBridge();
   await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "interleaved", raw: null });
@@ -610,6 +779,8 @@ const tests = [
   testNoPrematureFinalizeOnStatusFlicker,
   testNoStaleInitialRender,
   testOrderedSegments,
+  testRebuildMessageId,
+  testSettleAfterPostDoneRace,
   testRunningToolNotPosted,
   testRestartRecovery,
   testSplitter,
