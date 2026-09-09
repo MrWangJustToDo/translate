@@ -84,6 +84,8 @@ export class AgentLog {
       data?: Record<string, unknown>;
       error?: Error;
       tags?: string[];
+      /** Originating bus event type (Event→Log bridge). */
+      event?: string;
     }
   ): LogEntry | null {
     if (!this.shouldLog(level)) return null;
@@ -98,6 +100,7 @@ export class AgentLog {
 
     if (options?.data) entry.data = options.data;
     if (options?.tags) entry.tags = options.tags;
+    if (options?.event) entry.event = options.event;
     if (this.currentRun) entry.run = this.currentRun;
     if (options?.error) {
       entry.error = {
@@ -133,6 +136,22 @@ export class AgentLog {
     tags?: string[]
   ): LogEntry | null {
     return this.log("error", category, message, { data, error, tags });
+  }
+
+  /**
+   * Write an entry stamped with the originating bus event type — the typed
+   * Event→Log path (see {@link bridgeTelemetryToAgentLog}). Direct log calls
+   * should use debug/info/warn/error instead.
+   */
+  eventEntry(
+    level: LogLevel,
+    category: LogCategory,
+    eventType: string,
+    message: string,
+    data?: Record<string, unknown>,
+    error?: Error
+  ): LogEntry | null {
+    return this.log(level, category, message, { data, error, event: eventType });
   }
 
   // ============================================================================

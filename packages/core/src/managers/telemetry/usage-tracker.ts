@@ -3,7 +3,7 @@ import { Emitter } from "../../utils/emitter.js";
 
 import type { ModelCapability, ModelPricing } from "../../models/types.js";
 
-export { extractTanStackUsage } from "../../runtime-types/token-usage.js";
+export { extractTanStackProvider, extractTanStackUsage } from "../../runtime-types/token-usage.js";
 
 // ============================================================================
 // UsageTracker

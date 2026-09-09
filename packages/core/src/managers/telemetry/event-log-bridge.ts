@@ -107,22 +107,12 @@ function resolveRule(type: AgentEventType, policy?: EventLogPolicy): EventLogRul
 function writeLog(log: AgentLog, rule: EventLogRule, event: AgentEvent, message: string): void {
   const data = summarizePayload(p(event));
 
-  switch (rule.level) {
-    case "debug":
-      log.debug(rule.category, message, data);
-      break;
-    case "info":
-      log.info(rule.category, message, data);
-      break;
-    case "warn":
-      log.warn(rule.category, message, data);
-      break;
-    case "error": {
-      const errorMessage = (p(event).error as string | undefined) ?? message;
-      log.error(rule.category, message, new Error(errorMessage), data);
-      break;
-    }
+  if (rule.level === "error") {
+    const errorMessage = (p(event).error as string | undefined) ?? message;
+    log.eventEntry("error", rule.category, event.type, message, data, new Error(errorMessage));
+    return;
   }
+  log.eventEntry(rule.level, rule.category, event.type, message, data);
 }
 
 // ============================================================================

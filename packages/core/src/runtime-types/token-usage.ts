@@ -32,6 +32,29 @@ export function calculateCost(usage: TokenUsage, pricing: ModelPricing): number 
 }
 
 /**
+ * Extract the provider id reported by AG-UI `SpecTokenUsage[]` entries
+ * (first non-empty). Single-object usage carries no provider — returns
+ * undefined. Lets timeline events attribute usage/cost to a provider.
+ */
+export function extractTanStackProvider(
+  usage:
+    | {
+        promptTokens?: number;
+        completionTokens?: number;
+        totalTokens?: number;
+      }
+    | Array<{
+        provider?: string;
+      }>
+): string | undefined {
+  if (!Array.isArray(usage)) return undefined;
+  for (const entry of usage) {
+    if (entry.provider) return entry.provider;
+  }
+  return undefined;
+}
+
+/**
  * Map TanStack usage from `@tanstack/ai` RUN_FINISHED to core TokenUsage.
  *
  * TanStack 0.48+ allows `usage` to be either a single `TokenUsage` or an

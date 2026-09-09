@@ -38,4 +38,5 @@ export const logEntrySchema = z.object({
     .optional(),
   tags: z.array(z.string()).optional(),
   run: z.string().optional(),
+  event: z.string().optional(),
 });

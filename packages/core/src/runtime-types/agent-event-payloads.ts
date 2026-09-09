@@ -132,12 +132,16 @@ export type AgentEventPayloadMap = {
   };
   "llm:request": {
     model?: string;
+    /** Provider id reported by the adapter usage (sticky across iterations). */
+    provider?: string;
     iteration?: number;
     messagesCount?: number;
     toolsCount?: number;
   };
   "llm:response": {
     model?: string;
+    /** Provider id reported by the adapter usage. */
+    provider?: string;
     iteration?: number;
     finishReason?: string;
     inputTokens?: number;

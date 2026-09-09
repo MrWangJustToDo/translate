@@ -33,6 +33,12 @@ export interface LogEntry {
   tags?: string[];
   /** Optional short run id — entries written during an agent run share one id. */
   run?: string;
+  /**
+   * Originating bus event type (e.g. `llm:request`) when the entry was derived
+   * from a typed telemetry event via the Event→Log bridge. Direct log calls
+   * (bootstrap summaries, status transitions) leave this unset.
+   */
+  event?: string;
 }
 
 /** Options for persisting AgentLog entries to a JSONL file. */

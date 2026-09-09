@@ -6,7 +6,7 @@
  * is owned by {@link AgentChatController.pumpToolPhases} / detached runners — not per-`chat()` finish.
  */
 
-import { extractTanStackUsage } from "../../runtime-types/token-usage.js";
+import { extractTanStackProvider, extractTanStackUsage } from "../../runtime-types/token-usage.js";
 
 import type { ToolRunContext } from "../../agent/runner/run-context.js";
 import type { ModelPricing } from "../../models/types.js";
@@ -39,6 +39,7 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
   // Per-call observability captured for the `llm:response` timeline entry.
   let firstTokenAt = 0;
   let lastModel: string | undefined;
+  let lastProvider: string | undefined;
   let lastIteration = 0;
   let lastRoundElapsedMs = 0;
   let lastReasoningTokens = 0;
@@ -57,6 +58,9 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
 
       deps.emitEvent?.("llm:request", {
         model: ctx.model,
+        // Sticky from the previous iteration — AG-UI usage reports provider
+        // only on RUN_FINISHED, so the first request of a run has none yet.
+        provider: lastProvider,
         iteration: ctx.iteration,
         messagesCount: ctx.messages.length,
         toolsCount: ctx.toolNames?.length ?? 0,
@@ -89,6 +93,7 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
     },
     onUsage: (ctx, usage) => {
       const parsed = extractTanStackUsage(usage);
+      lastProvider = extractTanStackProvider(usage) ?? lastProvider;
       deps.usage.updateWindowUsage(parsed, deps.getPricing());
       // onUsage fires once per model iteration (each RUN_FINISHED). Record this
       // round's wall-clock (since RUN_STARTED) + output tokens independently so
@@ -107,6 +112,7 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
       const windowUsage = deps.usage.getWindowUsage();
       deps.emitEvent?.("llm:response", {
         model: lastModel,
+        provider: lastProvider,
         iteration: lastIteration,
         finishReason: info.finishReason ?? undefined,
         inputTokens: windowUsage.inputTokens,

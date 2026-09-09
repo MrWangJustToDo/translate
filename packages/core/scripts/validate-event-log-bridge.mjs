@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 
 import { AgentTelemetryBus, bridgeTelemetryToAgentLog } from "../dist/dev.mjs";
+
 import { createLogCapture, sleep } from "./helpers/log-capture.mjs";
 
 const capture = await createLogCapture("event-log-bridge");
@@ -33,6 +34,7 @@ let entries = await emitAndRead({
 const docEntry = entries.find((entry) => entry.category === "system");
 assert.ok(docEntry);
 assert.match(docEntry.message, /AGENTS\.md/);
+assert.equal(docEntry.event, "session:doc", "bridged entries are stamped with the originating event type");
 
 entries = await emitAndRead({
   type: "agent:tool-start",
@@ -53,6 +55,7 @@ assert.ok(toolEntry.data.inputBytes >= 5000, `inputBytes recorded, got ${JSON.st
 assert.ok(toolEntry.data.inputPreview.length <= 200, "preview is truncated to 200 chars");
 assert.equal(toolEntry.data.tool_input, undefined, "tool_input never inlined");
 assert.equal(toolEntry.data.eventType, undefined, "redundant eventType dropped");
+assert.equal(toolEntry.event, "agent:tool-start", "event type stamped on tool entries");
 
 // memory:prefetch success/empty outcomes are silent (only errors log).
 entries = await emitAndRead({
