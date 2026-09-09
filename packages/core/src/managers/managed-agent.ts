@@ -67,6 +67,7 @@ import {
 import { RunCoordinator } from "./run-coordinator.js";
 import { MemoryService } from "./services/memory-service.js";
 import { SessionService } from "./services/session-service.js";
+import { UsageHistoryService } from "./services/usage-history-service.js";
 import { emitAgentTelemetry } from "./telemetry/emit-agent-telemetry.js";
 import { UsageTracker } from "./telemetry/usage-tracker.js";
 
@@ -258,6 +259,8 @@ export class ManagedAgent {
   readonly usage: UsageTracker;
   readonly memory: MemoryService;
   readonly session: SessionService;
+  /** Global (cross-session) LLM usage persistence — contribution-graph source. */
+  readonly usageHistory: UsageHistoryService;
   readonly run: RunCoordinator;
   readonly statusController: AgentStatusController;
   /** Plan mode (read-only planning → execute). Root agents only; subagents leave phase off. */
@@ -362,6 +365,7 @@ export class ManagedAgent {
       usage?: UsageTracker;
       memory?: MemoryService;
       session?: SessionService;
+      usageHistory?: UsageHistoryService;
     }
   ) {
     this.id = init.id ?? config.id ?? generateId("agent");
@@ -376,6 +380,7 @@ export class ManagedAgent {
     this.usage = init.usage ?? new UsageTracker();
     this.memory = init.memory ?? new MemoryService();
     this.session = init.session ?? new SessionService();
+    this.usageHistory = init.usageHistory ?? new UsageHistoryService();
     this.run = new RunCoordinator();
     this.childIds = [];
     this.createdAt = Date.now();

@@ -1,6 +1,6 @@
 import { chat } from "@tanstack/ai";
 
-import { recordUsage } from "../../agent/usage/usage-history.js";
+import { sharedUsageHistory } from "../../managers/services/usage-history-service.js";
 import { calculateCost, extractTanStackUsage, type TokenUsage } from "../../runtime-types/token-usage.js";
 
 import type { TextAdapterConfig } from "./adapter-factory.js";
@@ -84,7 +84,7 @@ export async function runSideTextQuery(
       // selection) are real LLM calls and must show up in the contribution
       // graph. Cost uses the adapter's own model pricing (0 when unknown).
       if (usage) {
-        recordUsage({
+        sharedUsageHistory.record({
           agentId: "side-query",
           model: textAdapter.model,
           usage,
