@@ -1,6 +1,6 @@
 import { chat } from "@tanstack/ai";
 
-import { sharedUsageHistory } from "../../managers/services/usage-history-service.js";
+import { sharedUsageHistory } from "../../agent/usage/usage-history-service.js";
 import { calculateCost, extractTanStackUsage, type TokenUsage } from "../../runtime-types/token-usage.js";
 
 import type { TextAdapterConfig } from "./adapter-factory.js";

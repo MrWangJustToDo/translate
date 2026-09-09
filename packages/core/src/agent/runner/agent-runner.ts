@@ -1,6 +1,6 @@
 import { chat, maxIterations } from "@tanstack/ai";
 
-import { DEFAULT_AGENT_MAX_ITERATIONS } from "../../managers/agent-types.js";
+import { DEFAULT_AGENT_MAX_ITERATIONS } from "../../runtime-types/agent-limits.js";
 import { assertAsyncIterable } from "../stream/assert-async-iterable.js";
 
 import { createToolRunContext, type ToolRunContext } from "./run-context.js";
