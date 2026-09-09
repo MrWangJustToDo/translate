@@ -1,18 +1,26 @@
 /**
- * Validates RunCoordinator abort wiring and pending abort.
+ * Validates RunCoordinator abort wiring and pending abort, plus the
+ * CompactionService reactive-compact retry budget.
  *
  * Run: pnpm --filter @my-agent/core run validate:run-coordinator
  */
 /* eslint-disable no-undef */
 import assert from "node:assert/strict";
 
-import { AgentRunner, RunCoordinator } from "../dist/dev.mjs";
+import { AgentRunner, RunCoordinator, CompactionService } from "../dist/dev.mjs";
 
 const coordinator = new RunCoordinator();
 
 assert.equal(coordinator.isAbortError(new DOMException("aborted", "AbortError")), true);
 assert.equal(coordinator.isAbortError(new Error("network timeout")), false);
-assert.equal(coordinator.canRetryReactiveCompact(), true);
+
+// Reactive-compact retry budget (CompactionService)
+const compaction = new CompactionService();
+assert.equal(compaction.canRetryReactiveCompact(), true);
+assert.equal(compaction.recordReactiveCompactRetry(), 1);
+compaction.resetReactiveCompactRetries();
+assert.equal(compaction.canRetryReactiveCompact(), true);
+assert.equal(compaction.getMaxReactiveCompactRetries() > 0, true);
 
 {
   let status = "running";

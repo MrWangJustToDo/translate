@@ -13,7 +13,7 @@ import { estimateTokens } from "../agent/compaction/token-estimator.js";
 
 import type { AgentManager } from "./agent-manager.js";
 import type { AgentStatusController } from "./controllers/agent-status-controller.js";
-import type { RunCoordinator } from "./run-coordinator.js";
+import type { CompactionService } from "./services/compaction-service.js";
 import type { EmitAgentTelemetryFn } from "./telemetry/emit-agent-telemetry.js";
 import type { UsageTracker } from "./telemetry/usage-tracker.js";
 import type { AgentLog } from "../agent/agent-log/agent-log.js";
@@ -28,7 +28,7 @@ export interface ReactiveCompactHost {
   parentId?: string;
   ui?: AgentUIChannel;
   usage: UsageTracker;
-  run: RunCoordinator;
+  compaction: CompactionService;
   statusController: AgentStatusController;
   getCanonicalFromUI: () => ModelMessage[];
   getMessagesForLLM: (canon?: ModelMessage[]) => ModelMessage[];
@@ -46,7 +46,7 @@ export async function handleManagedReactiveCompact(
 ): Promise<boolean> {
   if (host.parentId) return false;
   if (!isPromptTooLongError(error)) return false;
-  if (!host.run.canRetryReactiveCompact()) {
+  if (!host.compaction.canRetryReactiveCompact()) {
     host.emitEvent("compaction:reactive-max-retries");
     return false;
   }
@@ -54,12 +54,12 @@ export async function handleManagedReactiveCompact(
   const channel = host.ui;
   if (!channel) return false;
 
-  const retry = host.run.recordReactiveCompactRetry();
+  const retry = host.compaction.recordReactiveCompactRetry();
 
   try {
     host.statusController.beginCompaction("reactive", {
       retry,
-      maxRetries: host.run.getMaxReactiveCompactRetries(),
+      maxRetries: host.compaction.getMaxReactiveCompactRetries(),
     });
     const canon = host.getCanonicalFromUI();
     const llmMessages = host.getMessagesForLLM(canon);

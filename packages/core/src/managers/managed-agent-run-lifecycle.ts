@@ -10,6 +10,7 @@ import { isToolContinuationPrepare } from "../agent/stream/tool-phase-utils.js";
 import type { AgentManager } from "./agent-manager.js";
 import type { AgentStatus, RunFinalizeReason } from "./agent-types.js";
 import type { RunCoordinator } from "./run-coordinator.js";
+import type { CompactionService } from "./services/compaction-service.js";
 import type { MemoryService } from "./services/memory-service.js";
 import type { EmitAgentTelemetryFn } from "./telemetry/emit-agent-telemetry.js";
 import type { UsageTracker } from "./telemetry/usage-tracker.js";
@@ -45,6 +46,7 @@ export interface RunLifecycleHost {
   usage: UsageTracker;
   ui?: AgentUIChannel;
   run: RunCoordinator;
+  compaction: CompactionService;
   memory: MemoryService;
 }
 
@@ -63,7 +65,7 @@ export async function prepareManagedAgentForRun(
       host.setStatus("aborted");
     },
   });
-  host.run.resetReactiveCompactRetries();
+  host.compaction.resetReactiveCompactRetries();
 
   // Always consume the flag (avoid `||` short-circuit leaving a stale continuation mark).
   const flaggedContinuation = host.consumePrepareAsContinuation() === true;

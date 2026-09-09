@@ -9,7 +9,6 @@ import {
 import { AutoModeController } from "../agent/approval/auto-mode-controller.js";
 import { buildAutoModePrompt } from "../agent/approval/auto-mode-prompt.js";
 import { ToolApprovalTable } from "../agent/approval/tool-approval-table.js";
-import { shouldTriggerAutoCompact } from "../agent/compaction/auto-compact.js";
 import { keepPolicyProjectionOptions, resolveKeepPolicy } from "../agent/compaction/keep-policy.js";
 import { getModelVisibleMessages } from "../agent/compaction/message-chain-projection.js";
 import { ToolCompactCache } from "../agent/compaction/tool-compact/tool-compact-cache.js";
@@ -64,6 +63,7 @@ import {
   saveSessionUIMessages as saveSessionUIMessagesHelper,
 } from "./managed-agent-session.js";
 import { RunCoordinator } from "./run-coordinator.js";
+import { CompactionService } from "./services/compaction-service.js";
 import { ExtensionRegistryService } from "./services/extension-registry-service.js";
 import { MemoryService } from "./services/memory-service.js";
 import { SessionService } from "./services/session-service.js";
@@ -335,7 +335,7 @@ export class ManagedAgent {
   // Compaction / session sync
   // ============================================================================
 
-  compactionConfig: CompactionConfig | null;
+  readonly compaction: CompactionService;
   readonly toolCompactCache: ToolCompactCache;
   readonly sessionSyncTracker: SessionSyncTracker;
 
@@ -383,6 +383,7 @@ export class ManagedAgent {
       session?: SessionService;
       usageHistory?: UsageHistoryService;
       extensions?: ExtensionRegistryService;
+      compaction?: CompactionService;
     }
   ) {
     this.id = init.id ?? config.id ?? generateId("agent");
@@ -469,7 +470,7 @@ export class ManagedAgent {
     // ============================================================================
     // Compaction / session sync (inline inits)
     // ============================================================================
-    this.compactionConfig = null;
+    this.compaction = init.compaction ?? new CompactionService();
     this.toolCompactCache = new ToolCompactCache();
     this.sessionSyncTracker = createSessionSyncTracker();
 
@@ -782,7 +783,7 @@ export class ManagedAgent {
   getMessagesForLLM(canon?: ModelMessage[]): ModelMessage[] {
     const base = canon ?? this.getCanonicalFromUI();
     const policy = keepPolicyProjectionOptions(
-      resolveKeepPolicy(this.compactionConfig ?? {}, this.modelInfo?.contextWindow)
+      resolveKeepPolicy(this.compaction.getConfig() ?? {}, this.modelInfo?.contextWindow)
     );
     return getModelVisibleMessages(base, policy);
   }
@@ -938,12 +939,12 @@ export class ManagedAgent {
       tokenThreshold: config.tokenThreshold,
       keepRecentFlows: config.keepRecentFlows,
     });
-    this.compactionConfig = config;
+    this.compaction.setConfig(config);
     this.usage.setTokenLimit(config.tokenThreshold);
   }
 
   getCompactionConfig(): CompactionConfig | null {
-    return this.compactionConfig;
+    return this.compaction.getConfig();
   }
 
   getToolCompactCache(): ToolCompactCache {
@@ -1235,8 +1236,7 @@ export class ManagedAgent {
   }
 
   shouldTriggerAutoCompact(messages?: ModelMessage[]): boolean {
-    const config = this.compactionConfig ?? {};
-    return shouldTriggerAutoCompact(config, {
+    return this.compaction.shouldTriggerAutoCompact({
       windowInputTokens: this.usage.getWindowUsage().inputTokens,
       messages,
       contextWindow: this.modelInfo?.contextWindow,
@@ -1332,7 +1332,7 @@ export class ManagedAgent {
         usage: this.usage,
         todoManager: this.todoManager,
         statusController: this.statusController,
-        compactionConfig: this.compactionConfig,
+        compactionConfig: this.compaction.getConfig(),
         contextWindow: this.modelInfo?.contextWindow,
         resetAdmittedTurnContext: () => this.resetAdmittedTurnContext(),
         resetSystemPrompt: () => this.resetSystemPrompt(),
@@ -1395,6 +1395,7 @@ export class ManagedAgent {
     this.setAutoModeEnabled(false);
     this.approvals.clear();
     this.run.resetRunState();
+    this.compaction.resetReactiveCompactRetries();
     this.statusController.resetToIdle();
     this.setError("");
     this.retryInfo = null;

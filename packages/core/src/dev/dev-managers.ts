@@ -17,6 +17,7 @@ export { AgentChatController } from "../managers/controllers/agent-chat-controll
 export { finalizeManagedAgentRun } from "../managers/managed-agent-run-lifecycle.js";
 export { ManagedAgent } from "../managers/managed-agent.js";
 export { RunCoordinator } from "../managers/run-coordinator.js";
+export { CompactionService } from "../managers/services/compaction-service.js";
 export { resolveTextAdapterForManaged } from "../managers/run-agent.js";
 export {
   extractRetryAfterSeconds,
