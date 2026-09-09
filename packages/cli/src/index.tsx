@@ -6,7 +6,6 @@ import {
   initConfig,
   initHighlighter,
   configureEnv,
-  useAgent,
   useConfig,
 } from "@my-agent/app";
 import {
