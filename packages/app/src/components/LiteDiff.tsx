@@ -150,7 +150,7 @@ export const LiteDiff = memo(function LiteDiff({
       {result.hidden > 0 && (
         <Box key="hidden" width={width} flexShrink={0} backgroundColor={BG.diffContext}>
           <Text color={COLORS.muted} dimColor>
-            {` ⋯ ${result.hidden} more line${result.hidden === 1 ? "" : "s"}`}
+            {` ··· ${result.hidden} more line${result.hidden === 1 ? "" : "s"}`}
           </Text>
         </Box>
       )}
