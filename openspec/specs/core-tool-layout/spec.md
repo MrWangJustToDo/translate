@@ -19,9 +19,9 @@ Domain feature modules MUST own the model-callable tool factories that primarily
 - **WHEN** a developer looks for the `task` tool factory
 - **THEN** that factory MUST be defined under `agent/subagent/`
 
-#### Scenario: Todo tool lives with todo-manager domain
+#### Scenario: Todo tool lives with todo domain
 - **WHEN** a developer looks for the `todo` tool factory
-- **THEN** that factory MUST be defined under `agent/todo-manager/`
+- **THEN** that factory MUST be defined under `agent/todo/`
 
 ### Requirement: Universal tools directory stays tool-focused
 `agent/tools/` MUST contain universal tool factories, the `createTools` assembler, `tool-config`, tool runtime glue (`runtime/`), shared tool helpers (`util/`), and websearch providers. Non-factory helpers that only support a single tool MUST NOT sit as peer files of `*-tool.ts` at the `tools/` root when they can live under `util/` or a feature subfolder.

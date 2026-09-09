@@ -28,15 +28,14 @@ Shared UI layer (CLI + extension). Agent control is **Session-only**: hooks, lay
 | `agentManager`, `createLocalAgentSessionHost`, `resolveModelConfigFromProvider`, `buildDefaultSystemPrompt` | `adapter/create-agent.ts` |
 | `buildDefaultSystemPrompt` | `hooks/use-config.ts` (default prompt fill) |
 
-Remote session Host bootstrap (`createRemoteSessionHost`) replaces the Local exception when `--remote-session` lands (§5).
+Remote session Host bootstrap (`createRemoteAgentSessionHost`) replaces the Local exception when `--remote-session` is used.
 
 ### Forbidden in app UI / commands / hooks (except bootstrap files above)
 
 - `ManagedAgent`, `agentManager`, `createManagedAgent`, `AgentManager`
-- Live `TodoManager` / `AgentLog` class instances (use Session snapshot / `log` channel)
+- Live `TodoManager` / `AgentLog` class instances (use Session snapshot / `lifecycle`; AgentLog is a persisted JSONL sink — no in-memory ring)
 - `SessionStore` (use `session.dispatch({ type: "session.list" })` / Host catalog)
 - Compaction executors: `autoCompact`, `applyCompactionResult`, `estimateTokens` (not on public core entry; run via `dispatch({ type: "compact" })`)
-- Live classes: `TodoManager`, `AgentLog`, `SessionStore` (not on public core entry; use Session snapshot / commands)
 - Side-LLM / managed runners: `runSideTextQuery`, `resolveTextAdapterForManaged`
 - Runtime extension loaders: `ExtensionRunner`, `ExtensionLoader` (observe via Session `extensions` snapshot)
 

@@ -13,7 +13,7 @@ For monorepo-wide context see [AGENTS.md](../../AGENTS.md). For public exports s
 | CoreEnv abstraction                       | **Done**         | `registerCoreEnv` / `getEnv`                                                                                            |
 | Agent factory & manager                   | **Done**         | Root vs subagent split                                                                                                  |
 | TanStack agent loop                       | **Done**         | `AgentRunner` + middleware stack                                                                                        |
-| Event protocol + Event→Log bridge         | **Done**         | `AgentTelemetryBus`, `event-log-bridge.ts`                                                                              |
+| Event protocol + Event→Log bridge         | **Done**         | `AgentTelemetryBus`, `managers/telemetry/event-log-bridge.ts`                                                                            |
 | Model config (`openai` / `anthropic`)     | **Done**         | `resolveModelConfig`, `createTextAdapter`                                                                               |
 | Session persistence                       | **Done**         | Unified `persistSession`; save failures reject + emit `session:save-error`                                              |
 | Agent Session API                         | **Done**         | Snapshot/commands + Local/Remote Host; **app is Session-only** (no ManagedAgent in UI)                                  |
@@ -735,7 +735,7 @@ Task / compact summary text uses `ManagedAgent.summaryStreams` (`SummaryStreamHu
 
 ### 8.4 Event → Log bridge
 
-**File:** `managers/event-log-bridge.ts`
+**File:** `managers/telemetry/event-log-bridge.ts`
 
 - Attached in `AgentManager` constructor
 - `DEFAULT_EVENT_LOG_RULES` controls level/category/message per event
@@ -837,14 +837,16 @@ Domain-owned tools live next to their domain (same pattern as `subagent/begin-su
 | Stream helpers      | `agent/stream/*`                                                                                                                             |
 | UI channel          | `agent/ui-channel.ts`                                                                                                                        |
 | Shared types        | `runtime-types/*`                                                                                                                            |
-| Telemetry           | `managers/agent-telemetry-bus.ts`, `managers/emit-agent-telemetry.ts`, `managers/event-log-bridge.ts`                                        |
-| Persistence         | `managers/session-service.ts`, `agent/persistence/session-store.ts`                                                                          |
-| Cross-cutting utils | `utils/emitter.ts`, `utils/generate-id.ts`                                                                                                   |
-| Domain helpers      | `agent/run-helpers/*` (tool-phase, empty-stream, pending queue — stay with chat/run)                                                         |
-| Memory              | `managers/memory-service.ts`, `agent/memory/*.ts`                                                                                            |
-| Compaction          | `agent/compaction/*.ts`                                                                                                                      |
-| Plan                | `agent/plan/*` (domain + plan tool factories)                                                                                                |
-| Tools               | `agent/tools/*.ts` (universal), `agent/tools/runtime/define-tool.ts`; domain tools under `plan/` / `skills/` / `subagent/` / `todo-manager/` |
+| Telemetry           | `managers/telemetry/agent-telemetry-bus.ts`, `managers/telemetry/emit-agent-telemetry.ts`, `managers/telemetry/event-log-bridge.ts`                                   |
+| Persistence         | `managers/services/session-service.ts`, `agent/persistence/session-store.ts`                                                                          |
+| Services (extracted) | `managers/services/` — session / memory / compaction / extension-registry / usage-history; `managers/run-coordinator.ts` (run lifecycle)               |
+| Usage               | `agent/usage/usage-store.ts` (pure IO), `managers/services/usage-history-service.ts` (global history)                                                   |
+| Cross-cutting utils | `utils/emitter.ts`, `utils/generate-id.ts`                                                                                                             |
+| Domain helpers      | `agent/run-helpers/*` (tool-phase, empty-stream, pending queue — stay with chat/run)                                                                   |
+| Memory              | `managers/services/memory-service.ts`, `agent/memory/*.ts`                                                                                             |
+| Compaction          | `managers/services/compaction-service.ts`, `agent/compaction/*.ts`                                                                                     |
+| Plan                | `agent/plan/*` (domain + plan tool factories)                                                                                                         |
+| Tools               | `agent/tools/*.ts` (universal), `agent/tools/runtime/define-tool.ts`; domain tools under `plan/` / `skills/` / `subagent/` / `todo/`                     |
 | Subagent            | `agent/subagent/run-subagent.ts`, `agent/subagent/task-tool.ts`                                                                              |
 | Models              | `models/model-config.ts`, `models/adapter-factory.ts`, `models/prompt-cache.ts`                                                              |
 | CoreEnv             | `env.ts` (+ `@my-agent/node` / `@my-agent/server`)                                                                                           |

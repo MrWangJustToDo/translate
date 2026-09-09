@@ -25,7 +25,7 @@ A **runtime-agnostic** AI coding agent — same core logic, runs in terminal, Ch
 | Category | Description |
 |----------|-------------|
 | **Multi-Model** | OpenAI, Anthropic, DeepSeek, Ollama, OpenRouter — any LLM provider via model adapter |
-| **Terminal UI** | React-powered TUI with Shiki syntax highlighting, scrollable diff views, streaming markdown, and theme support |
+| **Terminal UI** | React-powered TUI with Shiki syntax highlighting, a lightweight LiteDiff renderer for message-stream diffs (hunk-highlighted, full/lite toggle via `/appearance diff`), streaming markdown, and theme support |
 | **Workspace Browser** | Full-screen file tree (`Ctrl+E`) with git status, Seti/Nerd Font icons, scrollable file preview, and HEAD diff view |
 | **Chrome Extension** | Full agent UI running in the browser via remote CoreEnv (WXT + HeroUI) |
 | **Local / Remote** | Independent planes: workspace (`--remote-env`), LLM provider (`--remote-provider`), Agent Session (`--remote-session`) — all three support HTTP remoting with SSE auto-reconnect |
@@ -35,12 +35,13 @@ A **runtime-agnostic** AI coding agent — same core logic, runs in terminal, Ch
 | **Skills** | On-demand domain knowledge injection (list → load workflow) |
 | **Context Compaction** | `toModelOutput` tool shaping + auto/reactive LLM summarization; cut-away transcripts under `.agents/transcripts/` |
 | **Session Persistence** | Save/resume conversations under `.agents/sessions/` with auto-save |
+| **Usage Tracking** | Global per-LLM-call usage history (`/usage`, `.agents/usage/`) with a contribution graph, per-model totals, and cost rollups |
 | **Multiple Live Sessions** | Several live agent sessions can coexist and be switched on the fly (`Ctrl+X`) without losing state; core dedups disk-session ownership (a bound session can't be resumed twice) and the header shows the active session count |
 | **Memory** | Automatic cross-session knowledge extraction under `.agents/memory/` |
 | **Modes** | `Shift+Tab` cycles Normal → Auto (skip approvals) → Plan; `/mode` for explicit control (`plan` / `auto` / `off`) |
 | **Plan Mode** | Explore → review → Build → forced retro (`/mode plan`, persisted under `.agents/plans/`) |
 | **Background commands** | `run_command(run_in_background)` plus `get_command_output` / `kill_command` |
-| **Telemetry** | Lifecycle telemetry bus (bridged to agent log); hosts subscribe via AgentSession `lifecycle` |
+| **Telemetry** | Lifecycle telemetry bus bridged to a persisted agent log — a run-scoped event timeline (JSONL under `.agents/logs/<sessionId>/`, size-rotated); hosts subscribe via AgentSession `lifecycle` |
 | **Extensions** | Capability model like [Pi](https://pi.dev) — declarative extension modules (tools / commands / hooks); built-ins (LSP, Memory, Skills, MCP) + third-party modules under `.agents/extension` (`Ctrl+Y` panel). See [Extensions](#extensions) |
 | **Sandbox** | Isolated command execution with OS-level sandboxing (`@anthropic-ai/sandbox-runtime`) |
 | **Code Mode** | Sandboxed TypeScript execution via TanStack `ai-code-mode` — the model can write and run TS in an isolated V8 context with a curated subset of agent tools exposed as `external_*` functions (read-only fs eager, shell/websearch lazy) |
@@ -203,7 +204,7 @@ Interactive questions with arrow-key selection, multi-select toggles, and option
 
 ### Code Edits with Diff View
 
-Side-by-side diff for `edit_file` / `write_file` tool previews, rendered inline at full content height in the message stream. Approve / deny a pending edit with **y** / **n**. For interactive diff scrolling, open the workspace browser (`Ctrl+E`) and use the **Diff vs HEAD** view (**↑↓** scrolls when the right pane is focused).
+`edit_file` / `write_file` tool previews render inline through the **LiteDiff** renderer — whole-file add/delete collapse the gutter, and hunk regions are highlighted for accurate multi-line syntax. Approve / deny a pending edit with **y** / **n**. Toggle the renderer at runtime with `/appearance diff` (`lite` hunk rows vs `full` git-diff-view Split/Unified). For interactive diff scrolling, open the workspace browser (`Ctrl+E`) and use the **Diff vs HEAD** view (**↑↓** scrolls when the right pane is focused).
 
 ![Edit diff view](edit-diff.png)
 
@@ -303,6 +304,10 @@ BASE_URL=https://api.deepseek.com
 API_KEY=sk-your-key-here
 MODEL=deepseek-v4-flash
 
+# Optional: unified model config (.agents/config/models.json) replaces the
+# MODEL_* env vars — global settings + multiple provider entries + active
+# selection; /models switches the active entry/model at runtime.
+
 # Optional MODEL_* metadata overrides (name, context window, pricing, capabilities, …)
 # See packages/cli/src/model-env.ts
 
@@ -323,7 +328,7 @@ SANDBOX_ENV=native
 SERVER_PORT=3100
 ```
 
-Runtime data (sessions, memory, cache, plans, compaction transcripts, skills, extensions, MCP config) lives under a single gitignored **`.agents/`** directory. See [AGENTS.md — Workspace `.agents/` layout](AGENTS.md#workspace-agents-layout).
+Runtime data (sessions, usage history, memory, logs, cache, plans, compaction transcripts, skills, extensions, MCP config, unified model config) lives under a single gitignored **`.agents/`** directory. See [AGENTS.md — Workspace `.agents/` layout](AGENTS.md#workspace-agents-layout).
 
 ### Running
 
@@ -374,35 +379,44 @@ pnpm start:im-bridge
 
 `@my-agent/im-bridge` is a generic chat bridge — each platform is a `ChatAdapter`
 (Telegram ships first; Slack/Discord/飞书 adapters can reuse the same contract).
-It is a pure AgentSession client (same session path as `--remote-session`): it
-registers no CoreEnv/ModelProvider — the **agent server resolves the model from
-its own `.env`** (`MODEL` / `API_KEY` / `BASE_URL`).
+It is an AgentSession client with two modes:
+
+- **Remote (default):** `REMOTE_SESSION` points at an agent server — the bridge
+  registers no CoreEnv/ModelProvider; the **server resolves the model from its
+  own `.env`** (`MODEL` / `API_KEY` / `BASE_URL`).
+- **Local:** leave `REMOTE_SESSION` unset — the bridge boots an in-process agent
+  (like the CLI local mode), resolving the model through the unified models.json
+  pipeline (`.agents/config/models.json`, then `.env`); `SANDBOX_ENV` selects
+  the sandbox.
 
 Setup:
 
 ```bash
-# 1. Start the agent server (its .env must configure MODEL + API_KEY)
+# 1. Start the agent server (its .env must configure MODEL + API_KEY) — remote mode only
 pnpm start:server
 
 # 2. Create a bot with @BotFather and configure the bridge (.env)
 TELEGRAM_BOT_TOKEN=123456:ABC…      # from @BotFather /newbot
-REMOTE_SESSION=http://localhost:3100 # agent server
+# REMOTE_SESSION=http://localhost:3100 # agent server (absent = local mode)
 IM_BRIDGE_ALLOW_USERS=123456789      # comma-separated user ids (empty = allow all)
 # IM_BRIDGE_ALLOW_CHATS=…            # optional chat allowlist
-# IM_BRIDGE_MODEL=…                  # optional model override (default: server .env)
+# IM_BRIDGE_MODEL=…                  # optional model override (remote: sent to server; local: overrides MODEL)
 # IM_BRIDGE_DATA_DIR=.agents/im-bridge
-# IM_BRIDGE_EDIT_INTERVAL_MS=3000    # streaming edit throttle
-# IM_BRIDGE_APPROVAL_TTL_MS=60000    # approval/ask_user auto-deny TTL
+# IM_BRIDGE_EDIT_INTERVAL_MS=2000    # progress-row edit throttle
+# IM_BRIDGE_APPROVAL_TTL_MS=300000   # approval/ask_user auto-deny TTL (5 min)
 
 # 3. Start the bridge (long-polling, no public endpoint needed)
 pnpm start:im-bridge
 ```
 
 Behavior: one agent session per chat (persisted under `IM_BRIDGE_DATA_DIR`,
-restored via `host.connect` on restart); replies stream via in-place message
-edits; pending tool approvals and `ask_user` questions render as inline buttons;
-`/new` resets the chat's session, `/stop` stops the agent. Message the bot
-privately — group chats are mention-only.
+restored on restart); while the agent runs, a single progress row streams tool
+lines in place and a 💭 thinking row shows while the model reasons — the final
+**answer is delivered once complete** as fresh message(s); pending tool
+approvals and `ask_user` questions render as inline buttons (TTL auto-deny);
+`/new` resets the chat's session and `/stop` stops the agent (both registered in
+the Telegram command menu). Message the bot privately — group chats are
+mention-only.
 
 ---
 
@@ -466,7 +480,7 @@ The CLI has **4 input modes** — shortcuts adapt to the current mode:
 | `Ctrl+V` | Paste image | — | — | — |
 | `Ctrl+C` | Exit | Exit | Exit | Exit |
 
-Slash commands: `/help`, `/shortcuts`, `/mode`, `/compact`, `/clear`, `/rename`, `/resume`, `/mcp`, `/usage`, `/display`, `/theme`, `/effort`, `/quit` — plus extension commands: `/skill [name]`, `/memory [name]`, `/lsp`, `/lsp-restart`, `/lsp-config`
+Slash commands: `/help` (shortcuts + commands merged), `/mode`, `/compact`, `/clear`, `/rename`, `/resume`, `/usage`, `/appearance` (theme · display · diff), `/models`, `/effort`, `/quit` — plus extension commands: `/mcp`, `/skill [name]`, `/memory [name]`, `/lsp`, `/lsp-restart`, `/lsp-config`
 
 ---
 

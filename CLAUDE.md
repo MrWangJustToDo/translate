@@ -16,6 +16,7 @@ See [AGENTS.md](AGENTS.md) for full architecture, code conventions, and detailed
 - **`@my-agent/extension`** — Chrome extension host using WXT (needs a server)
 - **`@my-agent/playground`** — In-browser WebContainer host
 - **`@my-agent/mcp-server`** — MCP server for external tool integration
+- **`@my-agent/im-bridge`** — Generic IM bridge (Telegram adapter); AgentSession client — remote mode (server resolves model) or in-process local mode
 
 ## Commands
 
@@ -26,6 +27,7 @@ pnpm dev                  # Watch mode for all packages
 pnpm start:cli            # Run CLI after build
 pnpm start:server         # Run CoreEnv HTTP server (default :3100)
 pnpm dev:playground       # WebContainer playground (Vite)
+pnpm start:im-bridge      # Telegram bridge (REMOTE_SESSION set = remote mode; absent = local mode)
 pnpm typecheck            # Type check all packages
 pnpm lint                 # ESLint
 pnpm format               # Prettier

@@ -23,7 +23,7 @@ This file provides guidelines for AI coding agents working in this repository.
 
 ## Project Overview
 
-A pnpm monorepo with eight packages organized in a layered architecture.
+A pnpm monorepo with nine packages organized in a layered architecture.
 
 **Core runtime deep-dive:** [packages/core/ARCHITECTURE.md](packages/core/ARCHITECTURE.md) — startup, initialization, session/memory/compaction/approval flows.
 
@@ -37,7 +37,7 @@ A pnpm monorepo with eight packages organized in a layered architecture.
 | `@my-agent/extension` | Chrome extension host using WXT framework |
 | `@my-agent/playground` | In-browser WebContainer host (Vite) |
 | `@my-agent/mcp-server` | MCP server for external tool integration |
-| `@my-agent/im-bridge` | Generic IM bridge (Telegram adapter) — a headless AgentSession client like the remote CLI; no CoreEnv/ModelProvider of its own |
+| `@my-agent/im-bridge` | Generic IM bridge (Telegram adapter) — a headless AgentSession client like the remote CLI; no CoreEnv/ModelProvider of its own in remote mode, in-process local mode otherwise |
 
 ## Architecture
 
@@ -135,7 +135,7 @@ registerModelProvider(await createRemoteProvider("http://localhost:3100"));
 
 The exclusivity is a **client** rule: a server (`pnpm start:server`) may itself register `REMOTE_ENV` (remote workspace; `REMOTE_PROVIDER` forwarding planned) so a `--remote-session` server chains further remote planes.
 
-`createAgentFromConfig` uses `resolveModelConfigFromProvider()`. Remote mode forces `baseURL`/`apiKey` from the provider (re-forced after models.dev so upstream URLs cannot bypass). `/api/env/vars` strips `API_KEY` / `*_API_KEY`. Footer shows `model · remote` when `providerMode === "remote"`.
+`createAgentFromConfig` uses `resolveModelConfigFromProvider()`. All hosts share one model-config pipeline (`models-config.ts`): a local `.agents/config/models.json` (file), a remote provider (`/api/provider/info`), or a remote-session server (`/api/agent/models`) — `/models` switches the active entry/model. Remote mode forces `baseURL`/`apiKey` from the provider (re-forced after models.dev so upstream URLs cannot bypass). `/api/env/vars` strips `API_KEY` / `*_API_KEY`. Footer shows `model · remote` when `providerMode === "remote"`.
 
 ### AgentAdapter — Host Abstraction
 
@@ -189,7 +189,7 @@ ConnectionGuard(/health) → createRemoteEnv(url) → registerCoreEnv
 | CoreEnv | `registerCoreEnv`, `getEnv`, `CoreEnv` types |
 | ModelProvider | `registerModelProvider`, `createDirectModelProvider`, `resolveModelConfigFromProvider` |
 | Runtime | `agentManager`, `AgentManager`, `ManagedAgent`, `AgentSession` / `AgentSessionHost` |
-| UI / state | Session-safe types (`TodoItem`, `LogEntry`, …); `AgentLog`/`TodoManager`/`SessionStore` classes are package-private |
+| UI / state | Session-safe types (`TodoItem`, `LogEntry`, …); `AgentLog`/`TodoManager`/`SessionStore` classes are package-private (AgentLog is a persistence-only JSONL sink — `.agents/logs/<sessionId>/agent.log`) |
 | Compaction | Session `compact` command; executors (`autoCompact`, …) stay on `dev.ts` |
 | Bootstrap | `buildDefaultSystemPrompt`, `resolveModelConfig`, `resolveModelConfigFromProvider` |
 | UI helpers | `previewEdit`, AgentSession `tool` channel (run_command stdout/stderr), tool output types |
@@ -221,6 +221,7 @@ pnpm build:app        # Build app package only
 pnpm build:cli        # Build CLI package only
 pnpm build:server     # Build server package only
 pnpm build:extension  # Build extension only
+pnpm build:im-bridge  # Build im-bridge package only
 
 pnpm dev              # Run all packages in watch mode (parallel)
 pnpm dev:core         # Watch core package
@@ -230,6 +231,7 @@ pnpm dev:server       # Watch server package
 pnpm dev:extension    # Run extension dev server
 pnpm start:cli        # Run CLI after build
 pnpm start:server     # Run CoreEnv HTTP server
+pnpm start:im-bridge  # Run the IM bridge (Telegram)
 
 pnpm typecheck        # Type check all packages
 pnpm lint             # Run ESLint
@@ -433,7 +435,7 @@ Hosts should prefer `AgentSession` (`getSnapshot` / `dispatch` / `subscribe`) ov
 
 **Host-owned session plane:** hosts construct the `AgentSessionHost` (local manager, or remote HTTP when `--remote-session`) and inject it into `createAgentFromConfig`; the UI layer never imports core runtime singletons (enforced by app's `validate:core-imports`). Remote client features: SSE auto-reconnect with exponential backoff, server heartbeat ping + client watchdog, remount seeds (`/tool-buffers`, `/summary-streams`) so in-flight tool output and summary streams survive reconnects; state channel carries `name`, so commands sync without full-snapshot refetch.
 
-Internal domain updates use a typed `Emitter` (todos, usage, state, queues, plan, messages, log). Hosts subscribe via `AgentSession` channels projected from those Emitters; `lifecycle` projects a filtered `AgentTelemetryBus` set. Opt-in `log` channel is excluded from default subscribe. Domain classes expose `.on(...)` for internal Session projection — not a parallel host observation API.
+Internal domain updates use a typed `Emitter` (todos, usage, state, queues, plan, messages). Hosts subscribe via `AgentSession` channels projected from those Emitters; `lifecycle` projects a filtered `AgentTelemetryBus` set. The former structured `log` channel was **removed** — log observability is provided exclusively by the persisted JSONL file sink (`.agents/logs/<sessionId>/agent.log`). Domain classes expose `.on(...)` for internal Session projection — not a parallel host observation API.
 
 **TODO:** message channel currently delivers full `UIMessage[]` (incremental/patch later).
 
@@ -460,6 +462,7 @@ The `@my-agent/server` package exposes CoreEnv APIs over HTTP using Hono RPC for
 | `/api/mcp/:id/message` | POST | Send a JSON-RPC message to an MCP session |
 | `/api/mcp/:id` | DELETE | Clean up an MCP stdio process session |
 | `/api/agent` | GET | Catalog list (mirrors `AgentSessionHost.list()`) |
+| `/api/agent/models` | GET | Selectable model list for remote-session clients (`/models` command) |
 | `/api/agent` | POST | Create/bind AgentSession (full create options incl. maxIterations/mcp/toolConfig/resume) |
 | `/api/agent/:id/snapshot` | GET | AgentSession snapshot (root or subagent id) |
 | `/api/agent/:id/command` | POST | `dispatch(command)` |
@@ -511,7 +514,7 @@ registerModelProvider(await createRemoteProvider("http://localhost:3100"));
 
 **Vision note:** On OpenAI-compatible Chat Completions, multimodal tool results are lifted to a synthetic user `image_url` message (`liftToolMediaForChatCompletions`) so base64 is not stringified into `role: "tool"`. Anthropic keeps native multimodal `tool_result` parts. Official DeepSeek Chat Completions may still reject `image_url` (text-only schema); capability sanitization strips unsupported `image` / `audio` / `video` / `document` parts on the wire and retries once — use a vision-capable provider for real media understanding. Session/UI history always keeps structured image parts (and `.agents/media` binary files); wire stripping must not change persisted message shape.
 
-**Event → Log bridge:** `bridgeTelemetryToAgentLog()` in `AgentManager` maps telemetry events to `AgentLog` entries. Policy lives in `event-log-bridge.ts` (`DEFAULT_EVENT_LOG_RULES`); override per event type with `EventLogPolicy`. Emit sites should not duplicate lifecycle logs covered by events.
+**Event → Log bridge:** `bridgeTelemetryToAgentLog()` in `AgentManager` maps telemetry events to `AgentLog` entries — each stamped with the originating event type (`event`) and scoped to the in-flight run (`run`). Policy lives in `managers/telemetry/event-log-bridge.ts` (`DEFAULT_EVENT_LOG_RULES`); override per event type with `EventLogPolicy`. Emit sites should not duplicate lifecycle logs covered by events. The sink persists every entry to `.agents/logs/<sessionId>/agent.log` (size-rotated).
 
 ## Prompt Cache (prefix)
 
@@ -776,7 +779,9 @@ Runtime data under the project root is grouped under a single gitignored `.agent
 | Path | Purpose |
 |------|---------|
 | `.agents/sessions/` | Session JSON (`*.session.json`) |
+| `.agents/logs/<sessionId>/` | AgentLog JSONL event timeline (`agent.log`, size-rotated) |
 | `.agents/usage/` | Global usage history (`usage-<year>.jsonl`, per-LLM-call records) |
+| `.agents/config/models.json` | Unified model config (global settings + provider entries) |
 | `.agents/memory/` | Cross-session memory markdown + `MEMORY.md` |
 | `.agents/cache/tool-output/` | Large tool-output spill files |
 | `.agents/cache/models-dev.json` | models.dev metadata disk cache |
@@ -861,7 +866,7 @@ packages/
 │   ├── env.ts                         # CoreEnv interface, registry (registerCoreEnv/getEnv/clearCoreEnv)
 │   ├── env-types.ts                   # FileError / ExecutionError / fs+command result types
 │   ├── agent/
-│   │   ├── agent-log/                 # AgentLog — structured logging
+│   │   ├── agent-log/                 # AgentLog — run-scoped event timeline + JSONL file sink
 │   │   ├── approval/                  # Auto-mode controller + tool-approval table
 │   │   ├── compaction/                # Append SUMMARY + summary-first wire projection
 │   │   ├── extension/                 # Extension API (loader, runner, EventBus interception)
@@ -878,14 +883,17 @@ packages/
 │   │   ├── stream/                    # Stream helpers (errors, assistant-text extract)
 │   │   ├── subagent/                  # Subagent spawning + task tool (+ prefork / phase state)
 │   │   ├── summary-stream/            # SummaryStreamHub (task / compact summary streams)
-│   │   ├── todo-manager/              # Todo tracking + todo tool
+│   │   ├── todo/                      # Todo tracking + todo tool
 │   │   ├── tools/                     # Universal AI tools (fs, shell, web) + runtime/util
 │   │   ├── turn-context/              # Per-turn dynamic context (<ctx kind=...> payload)
 │   │   ├── ui-channel.ts              # AgentUIChannel (chat / subagent preview)
 │   │   ├── default-prompt.ts          # System prompt builder
 │   │   └── agent-doc-loader.ts        # Agent documentation loader
 │   ├── agent-session/                 # Host-facing AgentSession / Host API
-│   ├── managers/                      # AgentManager, ManagedAgent, middleware, run pipeline
+│   ├── managers/                      # AgentManager, ManagedAgent, RunCoordinator, services/, middleware
+│   │   ├── run-coordinator.ts          # Run lifecycle flags/timing (prepare/run/finalize)
+│   │   ├── services/                   # Session / memory / compaction / extension-registry / usage-history services
+│   │   └── telemetry/                  # AgentTelemetryBus + Event→Log bridge (event-log-bridge.ts)
 │   ├── models/                        # Model config (model-config.ts), adapters, models.dev lookup
 │   ├── runtime-types/                 # Shared status / event / usage types (no manager deps)
 │   ├── utils/                         # Cross-cutting helpers (Emitter, generateId)
@@ -897,7 +905,7 @@ packages/
 │   │   ├── types.ts                   # AgentAdapter, AppConfig, InitResult interfaces
 │   │   └── create-agent.ts            # Shared createAgentFromConfig() helper
 │   ├── app/                           # Main app components (App.tsx, Agent.tsx)
-│   ├── commands/                      # Slash commands (/help, /shortcuts, /mode, /compact, /display, /theme, /clear, etc.)
+│   ├── commands/                      # Slash commands (/help, /appearance, /mode, /models, /usage, /compact, /clear, /rename, /resume, /effort, /quit)
 │   ├── components/                    # React components (UserInput, EditDiff, Help, etc.)
 │   ├── context/                       # React contexts (AdapterProvider)
 │   ├── hooks/                         # Shared hooks (useAgentChat, useConfig, useAgent, etc.)

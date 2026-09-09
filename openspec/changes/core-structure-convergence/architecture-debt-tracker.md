@@ -31,16 +31,18 @@ Tracking redundant, overlapping, and unclear responsibilities in `packages/core`
 ```
 AgentManager (registry + event bus)
   └── ManagedAgent (~514 lines) — composition root
-        ├── usage / memory / session / run (RunCoordinator)
+        ├── services: SessionService / MemoryService / CompactionService /
+        │   ExtensionRegistryService / UsageHistoryService (managers/services/)
+        ├── run lifecycle: RunCoordinator (flags, abort, timing, run id)
         ├── context: AgentContext (messages + compaction only)
         ├── ui?: AgentUIChannel (subagent preview)
         └── run-agent → AgentRunner + middleware
 
-agent/  — domain: tools, compaction, memory, session-store, hooks, subagent, runner
+agent/  — domain: tools, compaction, memory, session-store, hooks, subagent, runner, todo, usage
 managers/ — runtime orchestration (agent/ imports managers types + injected deps)
 ```
 
-**Done recently (B.10–B.11):** `AgentContext` slimmed; usage moved to `UsageTracker` / `agent.usage`.
+**Done recently (B.10–B.11):** `AgentContext` slimmed; usage moved to `UsageTracker` / `agent.usage`. **2026-09:** run lifecycle → `RunCoordinator`; compaction → `CompactionService`; extensions → `ExtensionRegistryService`; usage persistence → `UsageStore` + `UsageHistoryService` (global `/usage` history).
 
 ---
 
@@ -156,7 +158,7 @@ managers/ — runtime orchestration (agent/ imports managers types + injected de
 |----|------|----------|--------|---------------------|
 | P2-9 | `lifecycle-middleware` does too much | status + usage + session save + memory extraction + emit | `[ ]` | Split middlewares |
 | P2-10 | Three deps patterns overlap | `ServiceDeps`, `AgentRunDeps`, per-middleware getter bags | `[~]` | `buildManagedAgentDeps()` unifies service + run; middleware getters remain |
-| P2-11 | `prepareForRun` vs middleware overlap | memory prefetch + prompt:submit in ManagedAgent; compaction in middleware | `[ ]` | `RunCoordinator.prepare()` owns pre-run |
+| P2-11 | `prepareForRun` vs middleware overlap | memory prefetch + prompt:submit in ManagedAgent; compaction in middleware | `[~]` | `RunCoordinator` now owns run-lifecycle flags/timing (7d0b195); `prepare()` pre-run consolidation still open |
 
 ### Exports
 
@@ -224,8 +226,8 @@ flowchart LR
 | `models/` | LLM adapters | 🟢 | Clear |
 | `connect/` | CLI bridge | 🟢 | Thin, appropriate |
 | `hooks/` + `agent-event-bus` | Scripts + events | 🟡 | Dual hook path |
-| `agent-log/` | Structured logging | 🟢 | Clear |
-| `skills/`, `mcp/`, `todo-manager/` | Feature modules | 🟢 | Clear |
+| `agent-log/` | Persistence-only event timeline + JSONL sink | 🟢 | Clear |
+| `skills/`, `mcp/`, `todo/` | Feature modules | 🟢 | Clear |
 
 ---
 
