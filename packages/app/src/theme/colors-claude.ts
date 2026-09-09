@@ -121,6 +121,10 @@ export const BG = {
   rowCursor: interpolateColor(TERMINAL_BG, COLORS.primary, 0.32),
   /** File tree row — open preview file (accent tint). */
   rowSelected: interpolateColor(TERMINAL_BG, COLORS.accent, 0.26),
+  /** LiteDiff unchanged/context-line background — neutral gray grouping tint
+   *  so the whole diff block reads as one region (transparentBody container
+   *  paints nothing behind it). */
+  diffContext: interpolateColor(TERMINAL_BG, GRAY, 0.1),
   /** LiteDiff added-line background — subtle green tint. */
   diffAdded: interpolateColor(TERMINAL_BG, COLORS.success, 0.16),
   /** LiteDiff removed-line background — subtle red tint. */

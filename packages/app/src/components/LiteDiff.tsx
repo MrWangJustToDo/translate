@@ -37,6 +37,7 @@ function padNum(value: number | undefined, width: number): string {
 function rowBackground(type: LiteDiffRow["type"]): string | undefined {
   if (type === "add") return BG.diffAdded;
   if (type === "del") return BG.diffRemoved;
+  if (type === "context") return BG.diffContext;
   return undefined;
 }
 
@@ -93,7 +94,6 @@ export const LiteDiff = memo(function LiteDiff({
   // Whole-file add/delete only have one line-number side — collapse the
   // gutter to a single column instead of reserving an empty twin.
   const singleColumn = result.columns !== "both";
-  const gutterWidth = singleColumn ? numWidth + 3 : numWidth * 2 + 4; // "nnnn nnnn m " (m = +/- marker)
 
   if (rows.length === 0) {
     return <Text color={COLORS.muted}>{oldFile === "" && newFile === "" ? "empty file" : "no changes"}</Text>;
@@ -103,10 +103,15 @@ export const LiteDiff = memo(function LiteDiff({
     <Box flexDirection="column" flexShrink={0} width={width}>
       {rows.map((row, i) => {
         if (row.type === "gap") {
+          // Hunk separator — keeps the leading ··· marker, drops the trailing
+          // ⋯ ellipsis; the row Box carries the diff background across the
+          // full width so the skipped-region break reads as a quiet gap.
           return (
-            <Text key={`gap-${i}`} color={COLORS.muted} dimColor>
-              {`${"·".repeat(3)}${" ".repeat(Math.max(0, gutterWidth - 3))}⋯`}
-            </Text>
+            <Box key={`gap-${i}`} width={width} flexShrink={0} backgroundColor={BG.diffContext}>
+              <Text color={COLORS.muted} dimColor>
+                {" ···"}
+              </Text>
+            </Box>
           );
         }
         const bg = rowBackground(row.type);
@@ -143,9 +148,11 @@ export const LiteDiff = memo(function LiteDiff({
         );
       })}
       {result.hidden > 0 && (
-        <Text color={COLORS.muted} dimColor>
-          {`⋯ ${result.hidden} more line${result.hidden === 1 ? "" : "s"}`}
-        </Text>
+        <Box key="hidden" width={width} flexShrink={0} backgroundColor={BG.diffContext}>
+          <Text color={COLORS.muted} dimColor>
+            {` ⋯ ${result.hidden} more line${result.hidden === 1 ? "" : "s"}`}
+          </Text>
+        </Box>
       )}
     </Box>
   );
