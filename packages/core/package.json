@@ -95,6 +95,7 @@
     "validate:approval-middleware": "pnpm run build && node scripts/validate-status-middleware.mjs",
     "validate:status-middleware": "pnpm run build && node scripts/validate-status-middleware.mjs",
     "validate:lifecycle-middleware": "pnpm run build && node scripts/validate-lifecycle-middleware.mjs",
+    "validate:lifecycle-provider": "pnpm run build && node scripts/validate-lifecycle-provider.mjs",
     "validate:run-finalize": "pnpm run build && node scripts/validate-run-finalize.mjs",
     "validate:extensions-middleware": "pnpm run build && node scripts/validate-extensions-middleware.mjs",
     "validate:early-tool-result-ui": "pnpm run build && node scripts/validate-early-tool-result-ui.mjs",

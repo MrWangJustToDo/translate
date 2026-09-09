@@ -19,6 +19,20 @@ import type { ChatMiddleware } from "@tanstack/ai";
 // Lifecycle middleware
 // ============================================================================
 
+/**
+ * Provider id from the `provider/model` model-id convention
+ * ("deepseek/deepseek-v4-flash-0731" → "deepseek"). The runtime pipeline never
+ * surfaces a provider name — the OpenAI-base adapters map only token fields and
+ * `rebuildTokenUsage` folds AG-UI `SpecTokenUsage[]` into a single object before
+ * `onUsage` — so the model prefix is the only reliable source. Returns undefined
+ * for bare model ids (no `/`).
+ */
+function providerFromModel(model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  const slash = model.indexOf("/");
+  return slash > 0 ? model.slice(0, slash) : undefined;
+}
+
 export interface LifecycleMiddlewareDeps {
   usage: UsageTracker;
   getPricing: () => ModelPricing | null | undefined;
@@ -58,9 +72,10 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
 
       deps.emitEvent?.("llm:request", {
         model: ctx.model,
-        // Sticky from the previous iteration — AG-UI usage reports provider
-        // only on RUN_FINISHED, so the first request of a run has none yet.
-        provider: lastProvider,
+        // Sticky from the previous iteration; falls back to the model-id prefix
+        // for the first request of a run (usage never carries a provider here —
+        // see {@link providerFromModel}).
+        provider: lastProvider ?? providerFromModel(ctx?.model),
         iteration: ctx.iteration,
         messagesCount: ctx.messages.length,
         toolsCount: ctx.toolNames?.length ?? 0,
@@ -93,7 +108,9 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
     },
     onUsage: (ctx, usage) => {
       const parsed = extractTanStackUsage(usage);
-      lastProvider = extractTanStackProvider(usage) ?? lastProvider;
+      // AG-UI SpecTokenUsage[] entries carry a provider; keep the extractor as
+      // the preferred source (future-proof) and fall back to the model prefix.
+      lastProvider = extractTanStackProvider(usage) ?? providerFromModel(ctx?.model) ?? lastProvider;
       deps.usage.updateWindowUsage(parsed, deps.getPricing());
       // onUsage fires once per model iteration (each RUN_FINISHED). Record this
       // round's wall-clock (since RUN_STARTED) + output tokens independently so
