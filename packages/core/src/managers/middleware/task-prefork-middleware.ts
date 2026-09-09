@@ -14,6 +14,7 @@
 
 import { runSubagent, subagentResultToTaskOutput } from "../../agent/subagent/run-subagent.js";
 import { getTaskPreforkCoordinator } from "../../agent/subagent/task-prefork.js";
+import { SUBAGENT_NO_TRUNCATE } from "../../agent/subagent/types.js";
 import { generateId } from "../../utils/generate-id.js";
 
 import type { ToolRunContext } from "../../agent/runner/run-context.js";
@@ -167,7 +168,7 @@ async function runPreForked(
         parentAgentId,
         parentTaskToolCallId: toolCallId,
         autoDestroy: false,
-        maxOutputLength: Infinity,
+        maxOutputLength: SUBAGENT_NO_TRUNCATE,
         abortSignal: controller.signal,
       },
       { manager: deps.manager }

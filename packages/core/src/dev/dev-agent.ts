@@ -101,6 +101,7 @@ export {
   findCutPointByBudget,
   formatCompactArchivesSection,
   createCompactionSummaryUIMessage,
+  createCompactionConfig,
   findLatestSummaryIndex,
   formatCompactionSummaryContent,
   extractCompactionSummaryBody,
@@ -140,6 +141,7 @@ export { findRelevantMemories, formatRelevantMemories } from "../agent/memory/me
 export type { RelevantMemory } from "../agent/memory/memory-retrieval.js";
 export {
   DEFAULT_SUMMARIZATION_CONTEXT_WINDOW,
+  resolveSummarizationBudget,
   resolveSummarizationInputBudget,
   splitMessagesByTokenBudget,
 } from "../agent/compaction/summarization-budget.js";

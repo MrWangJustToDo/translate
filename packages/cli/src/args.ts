@@ -10,6 +10,9 @@ import type { ModelStyle } from "@my-agent/core";
 // Argument Parsing
 // ============================================================================
 
+/** Default max iterations for the CLI host agent loop. */
+export const CLI_DEFAULT_MAX_ITERATIONS = 50;
+
 interface ParsedArgs {
   positional: string[];
   flags: Record<string, string | boolean>;
@@ -108,7 +111,7 @@ export function parseCliArgs(argv: string[]): ParsedCliConfig {
 
   const envModel = getEnv("MODEL") || getEnv("model");
   const envMaxIterations = getEnv("MAX_ITERATIONS") || getEnv("maxIterations");
-  const envMaxIter = envMaxIterations ? parseInt(envMaxIterations, 10) : 50;
+  const envMaxIter = envMaxIterations ? parseInt(envMaxIterations, 10) : CLI_DEFAULT_MAX_ITERATIONS;
 
   const cliStyle = parseCliStyle(getFlagString(parsed, "", "style"));
   const cliBaseURL = getFlagString(parsed, "", "base-url", "baseURL", "url", "u");
@@ -182,7 +185,7 @@ export function parseCliArgs(argv: string[]): ParsedCliConfig {
     apiKey: connection.apiKey,
     systemPrompt: getFlagString(parsed, "", "system", "s"),
     initialPrompt: parsed.positional.join(" "),
-    maxIterations: getFlagNumber(parsed, isNaN(envMaxIter) ? 50 : envMaxIter, "max-iterations"),
+    maxIterations: getFlagNumber(parsed, isNaN(envMaxIter) ? CLI_DEFAULT_MAX_ITERATIONS : envMaxIter, "max-iterations"),
     debug: getFlagBoolean(parsed, "debug", "d"),
     mcpConfigPath: getFlagString(parsed, envMcpConfig, "mcp-config"),
     extensionDirs,

@@ -12,6 +12,7 @@ import { convertMessagesToModelMessages } from "@tanstack/ai";
 import assert from "node:assert/strict";
 
 import {
+  createCompactionConfig,
   deriveKeepRecentTokens,
   findCutPoint,
   findCutPointByBudget,
@@ -209,5 +210,18 @@ assert.deepEqual(resolveAutoCompactTrigger({ compactAtPercent: 80 }, 32_000), {
   const legacyWire = getModelVisibleMessages(chronologic, { keepRecentFlows: 2 });
   assert.ok(wireA.length <= legacyWire.length);
 }
+
+// ============================================================================
+// Single default source: both createCompactionConfig paths resolve to 80%
+// ============================================================================
+assert.equal(createCompactionConfig({}).compactAtPercent, 80, "explicit-empty path → schema default 80");
+assert.equal(createCompactionConfig().compactAtPercent, 80, "undefined path → schema default 80");
+assert.deepEqual(
+  {
+    tokenThreshold: createCompactionConfig().tokenThreshold,
+    keepRecentFlows: createCompactionConfig().keepRecentFlows,
+  },
+  { tokenThreshold: 100_000, keepRecentFlows: 2 }
+);
 
 console.log("compaction-keep-policy validation passed");

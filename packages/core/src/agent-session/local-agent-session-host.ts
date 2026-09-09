@@ -43,11 +43,14 @@ function toListEntry(managed: ManagedAgent): AgentSessionListEntry {
   };
 }
 
+/** Default max iterations for the Local AgentSessionHost bootstrap. */
+const SESSION_HOST_DEFAULT_MAX_ITERATIONS = 100;
+
 function toManagedConfig(options: AgentSessionCreateOptions): ManagedAgentConfig {
   return {
     name: options.name,
     model: options.model,
-    maxIterations: options.maxIterations ?? 100,
+    maxIterations: options.maxIterations ?? SESSION_HOST_DEFAULT_MAX_ITERATIONS,
     ...(options.modelStyle ? { modelStyle: options.modelStyle } : {}),
     ...(options.modelBaseURL ? { modelBaseURL: options.modelBaseURL } : {}),
     ...(options.modelApiKey ? { modelApiKey: options.modelApiKey } : {}),

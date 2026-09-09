@@ -26,7 +26,13 @@ import { extractExistingSummary, findCutPoint, findCutPointByBudget } from "./cu
 import { extractFileOpsFromMessages, formatFileOperations } from "./file-ops-tracker.js";
 import { resolveAutoCompactTrigger, resolveKeepPolicy } from "./keep-policy.js";
 import { buildSegmentedConversationText, serializeConversation } from "./serialize-conversation.js";
-import { resolveSummarizationInputBudget, splitMessagesByTokenBudget } from "./summarization-budget.js";
+import {
+  resolveSummarizationInputBudget,
+  resolveSummarizationBudget,
+  splitMessagesByTokenBudget,
+  SUMMARIZATION_OVERHEAD_TOKENS,
+  SUMMARIZATION_CHARS_PER_TOKEN,
+} from "./summarization-budget.js";
 import { estimateTokens } from "./token-estimator.js";
 import { maybeAppendCompactArchive } from "./write-compact-archive.js";
 
@@ -158,7 +164,7 @@ export async function summarizeConversation(
   const inputBudget = resolveSummarizationInputBudget(manager, parentAgentId);
   // Prefer keeping still_in_context in budget; batch only the to-compress slice.
   const stillTokens = stillInContext?.length ? estimateTokens(stillInContext) : 0;
-  const compressBudget = Math.max(8_000, inputBudget - stillTokens);
+  const compressBudget = Math.max(SUMMARIZATION_OVERHEAD_TOKENS, inputBudget - stillTokens);
   const batches = splitMessagesByTokenBudget(cleanMessages, compressBudget);
 
   if (batches.length <= 1) {
@@ -218,6 +224,7 @@ async function summarizeConversationBatch(
 ): Promise<string> {
   const fullPrompt = buildSummarizationUserPrompt(messages, options);
   const compactId = compactSummaryStreamId(parentAgentId);
+  const { maxOutputTokens } = resolveSummarizationBudget(manager.getAgent(parentAgentId)?.getModelInfo());
 
   const result = await runSubagent(
     {
@@ -226,7 +233,7 @@ async function summarizeConversationBatch(
       systemPrompt: COMPACTION_SYSTEM_PROMPT,
       tools: {},
       maxIterations: 1,
-      maxOutputLength: 40000,
+      maxOutputLength: maxOutputTokens * SUMMARIZATION_CHARS_PER_TOKEN,
       autoDestroy: true,
       aggregateUsageToParent: true,
       description: "compaction",

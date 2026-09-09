@@ -27,6 +27,7 @@ import { toolOutputBaseSchema } from "../tools/util/types.js";
 
 import { runSubagent } from "./run-subagent.js";
 import { getTaskPreforkCoordinator } from "./task-prefork.js";
+import { SUBAGENT_NO_TRUNCATE } from "./types.js";
 
 import type { AgentManager } from "../../runtime-types/hosts.js";
 
@@ -169,7 +170,7 @@ Example use cases:
               parentAgentId,
               parentTaskToolCallId: toolCallId,
               autoDestroy: false,
-              maxOutputLength: Infinity,
+              maxOutputLength: SUBAGENT_NO_TRUNCATE,
             },
             { manager }
           ));

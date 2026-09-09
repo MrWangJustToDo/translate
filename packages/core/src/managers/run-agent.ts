@@ -10,6 +10,7 @@ import { createTextAdapter } from "../models/adapter/adapter-factory.js";
 import { resolvePromptCacheKey } from "../models/cache/prompt-cache.js";
 import { DEFAULT_BASE_URLS } from "../models/config/model-config.js";
 
+import { DEFAULT_AGENT_MAX_ITERATIONS } from "./agent-types.js";
 import { buildManagedAgentDeps } from "./managed-agent-deps.js";
 import {
   createApprovalResumeMiddleware,
@@ -215,7 +216,7 @@ export function buildAgentRunner(
   return new AgentRunner({
     adapter: textAdapter.adapter,
     model: textAdapter.model,
-    maxIterations: managed.config.maxIterations ?? 10,
+    maxIterations: managed.config.maxIterations ?? DEFAULT_AGENT_MAX_ITERATIONS,
     systemPrompts: systemPrompt ? [systemPrompt] : undefined,
     tools: resolveTanStackTools(managed),
     middleware: instrumentMiddlewareLog(middleware, deps.log),

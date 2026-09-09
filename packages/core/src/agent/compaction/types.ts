@@ -9,6 +9,22 @@
 import { z } from "zod";
 
 // ============================================================================
+// Defaults (single source of truth)
+// ============================================================================
+
+/**
+ * Canonical defaults for the compaction configuration — the single source of
+ * truth. Referenced by the schema `.default()` values and by
+ * {@link DEFAULT_COMPACTION_CONFIG}; change them here and both stay in sync.
+ */
+export const COMPACTION_CONFIG_DEFAULTS = {
+  tokenThreshold: 100000,
+  compactAtPercent: 80,
+  /** @deprecated Legacy fallback — prefer `keepRecentTokens`/token-budget derivation. */
+  keepRecentFlows: 2,
+} as const;
+
+// ============================================================================
 // Zod Schemas
 // ============================================================================
 
@@ -17,18 +33,23 @@ import { z } from "zod";
  */
 export const compactionConfigSchema = z.object({
   /** Token threshold (context window size) for auto-compaction (default: 100000) */
-  tokenThreshold: z.number().int().positive().default(100000),
+  tokenThreshold: z.number().int().positive().default(COMPACTION_CONFIG_DEFAULTS.tokenThreshold),
   /** Percentage of tokenThreshold at which compaction triggers (default: 80) */
-  compactAtPercent: z.number().min(50).max(99).default(80),
-  /** Number of recent user turns (inclusive) to keep after compaction (default: 2; legacy fallback) */
-  keepRecentFlows: z.number().int().positive().default(2),
+  compactAtPercent: z.number().min(50).max(99).default(COMPACTION_CONFIG_DEFAULTS.compactAtPercent),
+  /**
+   * @deprecated Legacy fallback: number of recent user turns (inclusive) to keep
+   * after compaction. Prefer `keepRecentTokens` — the default path — which is
+   * derived from the model context window when not explicitly configured. Only
+   * used when no context window is known (i.e. model metadata unavailable).
+   */
+  keepRecentFlows: z.number().int().positive().default(COMPACTION_CONFIG_DEFAULTS.keepRecentFlows),
   /**
    * Token budget for the kept window after compaction. When set, overrides
    * `keepRecentFlows`; when unset, derived from the model context window
    * (see keep-policy.ts) with `keepRecentFlows` as final fallback.
    */
   keepRecentTokens: z.number().int().positive().optional(),
-  /** Tokens reserved for summary + next turn in window-relative derivation (default: 16384) */
+  /** Tokens reserved for summary + next turn when deriving keep budget. Default is `DEFAULT_RESERVE_TOKENS` (keep-policy.ts). */
   reserveTokens: z.number().int().positive().optional(),
 });
 
@@ -72,17 +93,14 @@ export type CompactionConfigInput = z.input<typeof compactionConfigSchema>;
 export type CompactionResult = z.infer<typeof compactionResultSchema>;
 
 // ============================================================================
-// Defaults
+// Resolved defaults & factory
 // ============================================================================
 
 /**
- * Default compaction configuration values.
+ * Default compaction configuration values, derived from
+ * {@link COMPACTION_CONFIG_DEFAULTS} (never written independently).
  */
-export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
-  tokenThreshold: 100000,
-  compactAtPercent: 90,
-  keepRecentFlows: 2,
-};
+export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = { ...COMPACTION_CONFIG_DEFAULTS };
 
 /**
  * Create a compaction config with defaults applied.
@@ -97,6 +115,5 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
  * ```
  */
 export function createCompactionConfig(input?: CompactionConfigInput): CompactionConfig {
-  if (!input) return { ...DEFAULT_COMPACTION_CONFIG };
-  return compactionConfigSchema.parse(input);
+  return compactionConfigSchema.parse(input ?? {});
 }

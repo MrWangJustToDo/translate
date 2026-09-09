@@ -22,6 +22,9 @@ export const SUBAGENT_DEFAULT_MAX_ITERATIONS = 50;
 /** Default maximum characters for output (truncation limit) */
 export const SUBAGENT_DEFAULT_MAX_OUTPUT_LENGTH = 5000;
 
+/** Sentinel max output length meaning "do not truncate" (write the full summary to disk). */
+export const SUBAGENT_NO_TRUNCATE = Infinity;
+
 // ============================================================================
 // Types
 // ============================================================================

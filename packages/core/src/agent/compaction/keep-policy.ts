@@ -8,7 +8,7 @@
  * known, the system falls back to legacy `keepRecentFlows` turn counting.
  */
 
-import { DEFAULT_COMPACTION_CONFIG } from "./types.js";
+import { createCompactionConfig } from "./types.js";
 
 import type { CompactionConfig } from "./types.js";
 
@@ -18,6 +18,9 @@ import type { CompactionConfig } from "./types.js";
 
 /** Fraction of the model context window kept after compaction (opencode-style). */
 export const KEEP_RECENT_WINDOW_RATIO = 0.25;
+
+/** Cap on the derive-reserve as a fraction of the window (reserve never exceeds this). */
+export const RESERVE_WINDOW_CAP_RATIO = 0.25;
 
 /** Upper bound for the derived keep budget. */
 export const KEEP_RECENT_WINDOW_CAP = 64_000;
@@ -36,14 +39,16 @@ export const DEFAULT_RESERVE_TOKENS = 16_384;
  * Resolved keep policy for one agent.
  *
  * - `tokens`: keep the most recent messages whose estimated tokens fit in
- *   {@link KeepPolicy.keepRecentTokens} (pairing-safe boundaries).
- * - `turns`: legacy behavior — keep the last {@link KeepPolicy.keepRecentFlows}
- *   real user turns. Used only when no context window is known and no explicit
- *   `keepRecentTokens` is configured.
+ *   {@link KeepPolicy.keepRecentTokens} (pairing-safe boundaries). This is the
+ *   default/preferred path (driven by the model context window).
+ * - `turns` (@deprecated): legacy behavior — keep the last
+ *   {@link KeepPolicy.keepRecentFlows} real user turns. Only reached when no
+ *   context window is known and no explicit `keepRecentTokens` is configured.
  */
 export interface KeepPolicy {
   kind: "tokens" | "turns";
   keepRecentTokens?: number;
+  /** @deprecated Legacy fallback — prefer `keepRecentTokens` (the `tokens` kind). */
   keepRecentFlows?: number;
 }
 
@@ -62,7 +67,7 @@ export function resolveReserveTokens(config?: Partial<CompactionConfig>): number
  * constant-compaction territory (or below zero usable space).
  */
 function effectiveReserveTokens(reserveTokens: number, contextWindow: number): number {
-  const cap = Math.max(1, Math.floor(contextWindow * 0.25));
+  const cap = Math.max(1, Math.floor(contextWindow * RESERVE_WINDOW_CAP_RATIO));
   return Math.min(Math.max(0, reserveTokens), cap);
 }
 
@@ -81,8 +86,9 @@ export function deriveKeepRecentTokens(contextWindow: number, reserveTokens = DE
 /**
  * Resolve the keep policy for an agent.
  *
- * Priority: explicit `keepRecentTokens` > derived-from-context-window >
- * legacy `keepRecentFlows`.
+ * Priority: explicit `keepRecentTokens` > derived-from-context-window (tokens)
+ * > legacy `keepRecentFlows` (@deprecated — only reached when no context window
+ * is known and no explicit `keepRecentTokens` is configured).
  *
  * @param config - Compaction config (partial; defaults applied where relevant)
  * @param contextWindow - Model input context window in tokens, if known
@@ -91,17 +97,18 @@ export function resolveKeepPolicy(
   config: Partial<CompactionConfig> | null | undefined,
   contextWindow?: number
 ): KeepPolicy {
-  const explicit = config?.keepRecentTokens;
+  const resolved = createCompactionConfig(config ?? undefined);
+  const explicit = resolved.keepRecentTokens;
   if (explicit && explicit > 0) {
     return { kind: "tokens", keepRecentTokens: explicit };
   }
   if (contextWindow && contextWindow > 0) {
     return {
       kind: "tokens",
-      keepRecentTokens: deriveKeepRecentTokens(contextWindow, resolveReserveTokens(config ?? undefined)),
+      keepRecentTokens: deriveKeepRecentTokens(contextWindow, resolveReserveTokens(resolved)),
     };
   }
-  return { kind: "turns", keepRecentFlows: config?.keepRecentFlows ?? DEFAULT_COMPACTION_CONFIG.keepRecentFlows };
+  return { kind: "turns", keepRecentFlows: resolved.keepRecentFlows };
 }
 
 /**
@@ -133,8 +140,8 @@ export function resolveAutoCompactTrigger(
   config: Partial<CompactionConfig>,
   contextWindow?: number
 ): { triggerAt: number } {
-  const compactAtPercent = config.compactAtPercent ?? DEFAULT_COMPACTION_CONFIG.compactAtPercent;
-  const tokenThreshold = config.tokenThreshold ?? DEFAULT_COMPACTION_CONFIG.tokenThreshold;
-  const limit = contextWindow && contextWindow > 0 ? Math.min(tokenThreshold, contextWindow) : tokenThreshold;
-  return { triggerAt: Math.floor((limit * compactAtPercent) / 100) };
+  const resolved = createCompactionConfig(config);
+  const limit =
+    contextWindow && contextWindow > 0 ? Math.min(resolved.tokenThreshold, contextWindow) : resolved.tokenThreshold;
+  return { triggerAt: Math.floor((limit * resolved.compactAtPercent) / 100) };
 }

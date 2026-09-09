@@ -24,6 +24,16 @@ export {
 // Token estimation
 export { estimateTokens, estimateMessageTokens } from "./token-estimator.js";
 
+// Summarization token budget (model-metadata driven)
+export {
+  DEFAULT_SUMMARIZATION_CONTEXT_WINDOW,
+  MIN_SUMMARIZATION_INPUT_BUDGET,
+  SUMMARIZATION_OVERHEAD_TOKENS,
+  resolveSummarizationBudget,
+  resolveSummarizationInputBudget,
+  splitMessagesByTokenBudget,
+} from "./summarization-budget.js";
+
 // Message content helpers
 export { extractTextFromContent, getFirstTextPartContent } from "./message-utils.js";
 

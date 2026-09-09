@@ -10,6 +10,7 @@
 
 import { shouldTriggerAutoCompact } from "../../agent/compaction/auto-compact.js";
 import { getMaxReactiveRetries } from "../../agent/compaction/reactive-compact.js";
+import { createCompactionConfig } from "../../agent/compaction/types.js";
 
 import type { CompactionConfig } from "../../agent/compaction/types.js";
 import type { ModelMessage } from "@tanstack/ai";
@@ -35,7 +36,7 @@ export class CompactionService {
     messages?: ModelMessage[];
     contextWindow?: number;
   }): boolean {
-    return shouldTriggerAutoCompact(this.config ?? {}, options);
+    return shouldTriggerAutoCompact(this.config ?? createCompactionConfig(), options);
   }
 
   // ---------------------------------------------------------------------------

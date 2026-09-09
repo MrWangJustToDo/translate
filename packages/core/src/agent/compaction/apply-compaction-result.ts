@@ -19,7 +19,7 @@ import type { ModelMessage } from "@tanstack/ai";
 export interface ApplyCompactionResultOptions {
   /** Called if orphaned tool-cache cleanup fails (non-fatal). */
   onCacheCleanupError?: (error: Error) => void;
-  /** Legacy keepRecentFlows used for post-append visible window / cache cleanup (default: 2). */
+  /** @deprecated Legacy keepRecentFlows used for post-append visible window / cache cleanup (default: 2). */
   keepRecentFlows?: number;
   /** Token-budget keep policy; overrides keepRecentFlows when set. */
   keepRecentTokens?: number;

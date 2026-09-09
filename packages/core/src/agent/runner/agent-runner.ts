@@ -1,5 +1,6 @@
 import { chat, maxIterations } from "@tanstack/ai";
 
+import { DEFAULT_AGENT_MAX_ITERATIONS } from "../../managers/agent-types.js";
 import { assertAsyncIterable } from "../stream/assert-async-iterable.js";
 
 import { createToolRunContext, type ToolRunContext } from "./run-context.js";
@@ -116,7 +117,7 @@ export class AgentRunner {
       abortController,
       threadId: input.threadId,
       runId: input.runId,
-      agentLoopStrategy: maxIterations(this.config.maxIterations ?? 30),
+      agentLoopStrategy: maxIterations(this.config.maxIterations ?? DEFAULT_AGENT_MAX_ITERATIONS),
       lazyToolsConfig: this.config.lazyToolsConfig,
       // Silence [tanstack-ai:errors] console dumps — they break Ink TUI layout.
       // Failures still surface via RUN_ERROR / agent:stream-error / ManagedAgent.error.

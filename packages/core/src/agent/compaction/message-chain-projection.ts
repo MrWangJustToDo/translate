@@ -41,7 +41,11 @@ export function createCompactionSummaryUIMessage(summary: string, id?: string): 
 }
 
 export interface GetModelVisibleMessagesOptions {
-  /** Recent real user turns to keep before the latest summary (default: 2; legacy fallback). */
+  /**
+   * @deprecated Legacy fallback: recent real user turns to keep before the
+   * latest summary (default: 2). Prefer `keepRecentTokens` — the default path
+   * (token-budget derivation).
+   */
   keepRecentFlows?: number;
   /**
    * Token budget for the kept window. When set, the kept window is derived by

@@ -33,6 +33,12 @@ import type { ModelMessage } from "@tanstack/ai";
 // Constants
 // ============================================================================
 
+/** Max output length (chars) for the memory-extraction subagent (compact JSON array). */
+export const MEMORY_EXTRACT_MAX_OUTPUT_LENGTH = 2000;
+
+/** Max output length (chars) for the memory-consolidation subagent (merge/delete JSON). */
+export const MEMORY_CONSOLIDATE_MAX_OUTPUT_LENGTH = 8000;
+
 const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction assistant. Your role is to identify and extract \
 durable knowledge from conversation transcripts that should be remembered across sessions.
 
@@ -183,7 +189,7 @@ export async function extractMemories(
       systemPrompt: EXTRACTION_SYSTEM_PROMPT,
       tools: {},
       maxIterations: 1,
-      maxOutputLength: 2000,
+      maxOutputLength: MEMORY_EXTRACT_MAX_OUTPUT_LENGTH,
       autoDestroy: true,
       aggregateUsageToParent: true,
       description: "memory-extract",
@@ -297,7 +303,7 @@ async function llmConsolidate(
       systemPrompt: CONSOLIDATION_SYSTEM_PROMPT,
       tools: {},
       maxIterations: 1,
-      maxOutputLength: 8000,
+      maxOutputLength: MEMORY_CONSOLIDATE_MAX_OUTPUT_LENGTH,
       autoDestroy: true,
       aggregateUsageToParent: true,
       description: "memory-consolidate",
