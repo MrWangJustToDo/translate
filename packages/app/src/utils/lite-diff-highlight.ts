@@ -1,10 +1,12 @@
 /**
- * Per-line syntax highlighting for LiteDiff, backed by the same lowlight
- * engine that powers `@git-diff-view` (so token classes stay consistent).
+ * Syntax highlighting for LiteDiff, backed by the same lowlight engine that
+ * powers `@git-diff-view` (so token classes stay consistent).
  *
- * Strategy (borrowed from gemini-cli's CodeColorizer, plus one improvement):
- *  - highlight one line at a time (cheap, cache-friendly),
- *  - FIFO-cache segments by `lang\0text` so repeated renders are free,
+ * Strategy (borrowed from gemini-cli's CodeColorizer, plus two improvements):
+ *  - highlight whole hunk regions (adjacent diff lines) in one tokenizer pass,
+ *    so multi-line constructs (template literals, block comments, JSX blocks)
+ *    stay colored correctly — then split the AST back into per-line segments,
+ *  - FIFO-cache results by `lang\0text` so repeated renders are free,
  *  - unregistered languages fall back to plain text.
  */
 
@@ -34,10 +36,12 @@ export interface LiteDiffSegment {
   classes?: string[];
 }
 
-/** Max cached highlighted lines. Explicit FIFO (push/shift) eviction. */
+/** Max cached highlighted lines/regions. Explicit FIFO (push/shift) eviction. */
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 1024;
 /** Skip highlighting for extremely long lines. */
 const MAX_HIGHLIGHT_LINE_LENGTH = 500;
+/** Skip region highlighting for extremely long regions (joined hunk text). */
+const MAX_HIGHLIGHT_REGION_LENGTH = 4000;
 
 const EXT_TO_LANG: Record<string, string> = {
   js: "javascript",
@@ -108,8 +112,17 @@ export function langForPath(path: string): string | undefined {
   return lang && highlighter.hasRegisteredCurrentLang(lang) ? lang : undefined;
 }
 
-const cache = new Map<string, LiteDiffSegment[]>();
+const cache = new Map<string, LiteDiffSegment[] | Array<LiteDiffSegment[] | undefined>>();
 const cacheOrder: string[] = [];
+
+function cacheResult(key: string, value: LiteDiffSegment[] | Array<LiteDiffSegment[] | undefined>): void {
+  cache.set(key, value);
+  cacheOrder.push(key);
+  while (cacheOrder.length > MAX_HIGHLIGHT_CACHE_ENTRIES) {
+    const oldest = cacheOrder.shift();
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
 
 function collectSegments(node: HastNode, inherited: string[], out: LiteDiffSegment[]): void {
   if (node.type === "text") {
@@ -135,23 +148,77 @@ export function highlightLine(text: string, lang: string | undefined): LiteDiffS
 
   const key = `${lang}\0${text}`;
   const cached = cache.get(key);
-  if (cached) return cached;
+  if (cached) return cached as LiteDiffSegment[];
 
-  let segments: LiteDiffSegment[];
+  const segments = highlightText(text, lang);
+  if (!segments) return undefined;
+
+  cacheResult(key, segments);
+  return segments;
+}
+
+function highlightText(text: string, lang: string): LiteDiffSegment[] | undefined {
   try {
     const ast = highlighter.getAST(text, undefined, lang) as DiffAST | undefined;
     if (!ast) return undefined;
-    segments = [];
+    const segments: LiteDiffSegment[] = [];
     collectSegments(ast, [], segments);
+    return segments;
   } catch {
     return undefined;
   }
+}
 
-  cache.set(key, segments);
-  cacheOrder.push(key);
-  while (cacheOrder.length > MAX_HIGHLIGHT_CACHE_ENTRIES) {
-    const oldest = cacheOrder.shift();
-    if (oldest !== undefined) cache.delete(oldest);
+/**
+ * Split a region AST into per-line segments. Each line is colored with the
+ * context of the whole region, so multi-line tokens keep their class across
+ * line breaks. Returns undefined when the AST does not cover the region text
+ * exactly (alignment safety) — the caller degrades to per-line highlighting.
+ */
+function splitRegionSegments(joined: string, lang: string, lineCount: number): Array<LiteDiffSegment[]> | undefined {
+  const flat = highlightText(joined, lang);
+  if (!flat) return undefined;
+
+  let total = 0;
+  for (const seg of flat) total += seg.text.length;
+  if (total !== joined.length) return undefined;
+
+  const perLine: Array<LiteDiffSegment[]> = Array.from({ length: lineCount }, () => []);
+  let line = 0;
+  for (const seg of flat) {
+    const parts = seg.text.split("\n");
+    for (let p = 0; p < parts.length; p++) {
+      if (p > 0) line++;
+      if (line >= lineCount) break;
+      if (parts[p]) perLine[line].push({ text: parts[p], classes: seg.classes });
+    }
   }
-  return segments;
+  return perLine;
+}
+
+/**
+ * Highlight a run of adjacent diff lines (a hunk region) in one pass, then
+ * split the result back into per-line segments. Gives the tokenizer cross-line
+ * context that per-line highlighting misses. Falls back to per-line
+ * {@link highlightLine} when the language is missing, the region is too large,
+ * or region splitting cannot be aligned safely.
+ */
+export function highlightLines(texts: string[], lang: string | undefined): Array<LiteDiffSegment[] | undefined> {
+  if (!lang || texts.length === 0) return texts.map(() => undefined);
+
+  const joined = texts.join("\n");
+  const key = `${lang}\0r\0${joined}`;
+  const cached = cache.get(key);
+  if (cached) return cached as Array<LiteDiffSegment[] | undefined>;
+
+  let perLine: Array<LiteDiffSegment[] | undefined>;
+  if (texts.some((t) => t.includes("\n")) || joined.length > MAX_HIGHLIGHT_REGION_LENGTH) {
+    // Degraded input or huge region: no cross-line context.
+    perLine = texts.map((t) => highlightLine(t, lang));
+  } else {
+    perLine = splitRegionSegments(joined, lang, texts.length) ?? texts.map((t) => highlightLine(t, lang));
+  }
+
+  cacheResult(key, perLine);
+  return perLine;
 }

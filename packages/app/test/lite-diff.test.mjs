@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 
 const { createLiteDiff, parsePatchRows } = await import("../dist/utils/lite-diff.mjs");
+const { highlightLines } = await import("../dist/utils/lite-diff-highlight.mjs");
 
 const oldFile = ["a", "b", "c", "d", "e", "f", "g", "h"].join("\n");
 const newFile = ["a", "b", "c", "D", "e", "f", "g", "X", "Y"].join("\n");
@@ -104,6 +105,54 @@ const newFile = ["a", "b", "c", "D", "e", "f", "g", "X", "Y"].join("\n");
   assert.ok(
     rows.every((r) => r.type === "gap" || r.oldLine !== 0),
     "no oldLine 0 ghost rows"
+  );
+}
+
+// Hunk-region highlighting: text round-trips per line.
+{
+  const lines = ["const a = 1;", "const b = a + 2;", "// done"];
+  const segs = highlightLines(lines, "typescript");
+  assert.equal(segs.length, 3);
+  assert.ok(segs.every((s) => Array.isArray(s) && s.length > 0));
+  const roundTripped = segs.map((s) => s.map((seg) => seg.text).join(""));
+  assert.deepEqual(roundTripped, lines);
+}
+
+// Hunk-region highlighting keeps cross-line tokens colored: the block comment
+// spans two lines, so the continuation line must carry hljs-comment classes
+// (per-line highlighting would tokenize it as plain code).
+{
+  const lines = ["const a = 1;", "/* start", "end */ const b = a;"];
+  const segs = highlightLines(lines, "typescript");
+  const lastLineClasses = segs[2].flatMap((s) => s.classes ?? []);
+  assert.ok(lastLineClasses.includes("hljs-comment"), `comment spans lines: ${lastLineClasses}`);
+}
+
+// Degradation: no language → all undefined; embedded newlines and huge
+// regions fall back to per-line highlighting.
+{
+  assert.deepEqual(highlightLines(["x"], undefined), [undefined]);
+  assert.deepEqual(highlightLines([], "typescript"), []);
+  const embedded = highlightLines(["const a = 1;\nconst b = 2;"], "typescript");
+  assert.equal(embedded.length, 1);
+  const huge = highlightLines(
+    Array.from({ length: 200 }, (_, i) => `const v${i} = ${i};`),
+    "typescript"
+  );
+  assert.equal(huge.length, 200);
+  assert.ok(huge.every((s) => Array.isArray(s)));
+}
+
+// Gap rows split regions; region boundaries align with row indices.
+{
+  const lines = Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`);
+  const modified = [...lines];
+  modified[0] = "const changed0 = 0;";
+  modified[39] = "const changed39 = 39;";
+  const { rows } = createLiteDiff(lines.join("\n"), modified.join("\n"));
+  assert.ok(
+    rows.some((r) => r.type === "gap"),
+    "fixture produces a gap row"
   );
 }
 

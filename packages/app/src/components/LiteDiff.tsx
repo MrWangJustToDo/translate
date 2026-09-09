@@ -3,16 +3,19 @@ import { memo, useMemo } from "react";
 
 import { BG, COLORS } from "../theme/colors.js";
 import { syntaxColorForClasses } from "../theme/syntax-colors.js";
-import { highlightLine, langForPath } from "../utils/lite-diff-highlight.js";
+import { highlightLines, langForPath } from "../utils/lite-diff-highlight.js";
 import { createLiteDiff, type LiteDiffRow } from "../utils/lite-diff.js";
+
+import type { LiteDiffSegment } from "../utils/lite-diff-highlight.js";
 
 /**
  * Cheap diff renderer for message-view previews.
  *
  * Unlike {@link FileDiffContent} (full `@git-diff-view` Split/Unified views for
  * the interactive workspace), this renders only the changed hunks of a unified
- * patch with per-line highlight and a FIFO segment cache — O(hunk) instead of
- * O(file), and free on re-render when content is unchanged.
+ * patch with hunk-region highlight (adjacent rows share one tokenizer pass,
+ * so multi-line constructs stay colored correctly) and a FIFO segment cache —
+ * O(hunk) instead of O(file), and free on re-render when content is unchanged.
  */
 export type LiteDiffProps = {
   oldPath: string;
@@ -60,6 +63,30 @@ export const LiteDiff = memo(function LiteDiff({
   const lang = useMemo(() => langForPath(newPath || oldPath), [newPath, oldPath]);
 
   const rows = result.rows;
+
+  // Highlight whole hunk regions (runs of adjacent rows, split at gap markers)
+  // so the tokenizer sees cross-line context, then split back to per-row
+  // segments for rendering.
+  const segmentsByRow = useMemo(() => {
+    const perRow: Array<LiteDiffSegment[] | undefined> = new Array(rows.length).fill(undefined);
+    if (!lang) return perRow;
+    let start = 0;
+    const flush = (endExclusive: number) => {
+      const segs = highlightLines(
+        rows.slice(start, endExclusive).map((r) => r.text),
+        lang
+      );
+      for (let i = 0; i < segs.length; i++) perRow[start + i] = segs[i];
+    };
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].type === "gap") {
+        if (i > start) flush(i);
+        start = i + 1;
+      }
+    }
+    if (rows.length > start) flush(rows.length);
+    return perRow;
+  }, [rows, lang]);
   const maxOld = rows.reduce((acc, r) => Math.max(acc, r.oldLine ?? 0), 0);
   const maxNew = rows.reduce((acc, r) => Math.max(acc, r.newLine ?? 0), 0);
   const numWidth = Math.max(1, String(Math.max(maxOld, maxNew)).length);
@@ -85,7 +112,7 @@ export const LiteDiff = memo(function LiteDiff({
         const bg = rowBackground(row.type);
         const marker = rowMarker(row.type);
         const rawText = row.text;
-        const segments = highlightLine(rawText, lang);
+        const segments = segmentsByRow[i];
         // Rows mirror gemini-cli's DiffRenderer: a fixed gutter followed by a
         // wrapping content Text, so long lines fold onto continuation rows
         // (aligned under the content column) instead of being truncated.
