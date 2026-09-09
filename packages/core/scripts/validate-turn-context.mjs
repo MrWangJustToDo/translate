@@ -22,7 +22,7 @@ import {
   buildTurnContextSections,
   contextKindFromText,
   extractContextSection,
-  findCutPoint,
+  findCutPointByBudget,
   findLatestTurnContextSectionHashes,
   formatContextSectionUserContent,
   hashTurnContextPayload,
@@ -306,7 +306,7 @@ assert.equal(notifWire[1].content.includes("job done"), true);
 }
 
 // ---------------------------------------------------------------------------
-// 6. findCutPoint skips synthetic context messages when counting user turns.
+// 6. The budget walk never cuts on a synthetic context message.
 // ---------------------------------------------------------------------------
 const modelMessages = [
   { role: "user", content: "First" },
@@ -316,7 +316,12 @@ const modelMessages = [
   { role: "assistant", content: "A2" },
   { role: "user", content: "Third" },
 ];
-assert.equal(findCutPoint(modelMessages, 2), 3, "skip ctx message; cut on Second");
+for (const budget of [4, 20, 100]) {
+  const cut = findCutPointByBudget(modelMessages, budget);
+  if (cut.cutIndex === 0) continue;
+  const cutMessage = modelMessages[cut.cutIndex];
+  assert.equal(isContextModelMessage(cutMessage), false, `budget ${budget}: never cut on a synthetic ctx message`);
+}
 
 // ---------------------------------------------------------------------------
 // 7. Subagent kind whitelist (context isolation).

@@ -34,7 +34,7 @@ export interface ReactiveCompactHost {
   getMessagesForLLM: (canon?: ModelMessage[]) => ModelMessage[];
   emitEvent: EmitAgentTelemetryFn;
   resetAdmittedTurnContext?: () => void;
-  compactionConfig?: { keepRecentFlows?: number; keepRecentTokens?: number } | null;
+  compactionConfig?: { keepRecentTokens?: number } | null;
   /** Model input context window in tokens, if known (drives the reactive tail budget). */
   contextWindow?: number;
 }
@@ -188,7 +188,7 @@ export async function runManualCompact(
       return {
         ok: true,
         message:
-          "Nothing to compact — not enough older conversation to summarize (increase keepRecentFlows or add more history).",
+          "Nothing to compact — not enough older conversation to summarize (reduce keepRecentTokens or add more history).",
       };
     }
 

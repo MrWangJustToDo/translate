@@ -2,14 +2,14 @@
 
 ## 1. Config & budget resolution
 
-- [x] 1.1 Add `keepRecentTokens?: number` and `reserveTokens?: number` to `CompactionConfig` schema (`packages/core/src/agent/compaction/types.ts`); keep `keepRecentFlows` for legacy fallback
+- [x] 1.1 Add `keepRecentTokens?: number` and `reserveTokens?: number` to `CompactionConfig` schema (`packages/core/src/agent/compaction/types.ts`); legacy `keepRecentFlows` subsequently removed (token-budget is the only path)
 - [x] 1.2 Add `resolveKeepPolicy(config, modelInfo)` helper (budget vs legacy count; derivation `min(window * ratio, cap)`) with unit-covered defaults in a new validate script
 - [x] 1.3 Extend `shouldTriggerAutoCompact` to compute the trigger from `(contextWindow - reserveTokens)` when usage tokens and model window are available (`auto-compact.ts`, wire `ModelInfo` through middleware deps)
 
 ## 2. Cut point refactor
 
 - [x] 2.1 Rewrite `findCutPoint` (`cut-point.ts`) as backward token-budget walk returning `{ cutIndex, isSplitTurn, turnStartIndex }`; valid cut points exclude `role: "tool"`, in-chain summaries, explicit summary index, `<turn_context>`
-- [x] 2.2 Keep legacy count-based path behind the same signature for the no-window fallback
+- [x] 2.2 Legacy count-based fallback removed — the no-window case derives the budget from the shared default window (`DEFAULT_SUMMARIZATION_CONTEXT_WINDOW`)
 - [x] 2.3 Update/extend `scripts/validate-message-chain-projection.mjs` and add cut-point cases: budget respected, no orphan tool results, split-turn detection, legacy fallback parity
 
 ## 3. Projection threading

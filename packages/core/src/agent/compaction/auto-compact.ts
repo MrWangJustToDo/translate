@@ -22,7 +22,7 @@ import { isContextModelMessage } from "../turn-context/turn-context-message.js";
 
 import { buildCompactionPrompt, COMPACTION_SYSTEM_PROMPT, TURN_PREFIX_INSTRUCTION } from "./compaction-prompt.js";
 import { formatCompactionSummaryContent, isCompactionSummaryModelMessage } from "./compaction-summary.js";
-import { extractExistingSummary, findCutPoint, findCutPointByBudget } from "./cut-point.js";
+import { extractExistingSummary, findCutPointByBudget } from "./cut-point.js";
 import { extractFileOpsFromMessages, formatFileOperations } from "./file-ops-tracker.js";
 import { resolveAutoCompactTrigger, resolveKeepPolicy } from "./keep-policy.js";
 import { buildSegmentedConversationText, serializeConversation } from "./serialize-conversation.js";
@@ -41,12 +41,7 @@ import type { CompactionConfig, CompactionResult } from "./types.js";
 import type { AgentManager } from "../../runtime-types/hosts.js";
 import type { ModelMessage } from "@tanstack/ai";
 
-export {
-  extractExistingSummary,
-  findCutPoint,
-  findCutPointByBudget,
-  type BudgetedCutPointResult,
-} from "./cut-point.js";
+export { extractExistingSummary, findCutPointByBudget, type BudgetedCutPointResult } from "./cut-point.js";
 
 // ============================================================================
 // Public API
@@ -283,7 +278,8 @@ export function createCompactedMessages(summary: string): ModelMessage[] {
  * Algorithm:
  * 1. Detect a previous summary at index 0 when the input is already wire-ordered
  *    (summary-first); strip it from cut counting and feed as `existingSummary`.
- * 2. Find the cut point = the Nth real user message from the end (inclusive).
+ * 2. Find the cut point by a backward token-budget walk (pairing-safe; may cut
+ *    inside a turn — see cut-point.ts).
  * 3. Summarize with segmented input: `<to_compress>` (pre-cut) + `<still_in_context>`
  *    (kept turns). Previous summary is fed as `existingSummary` for incremental updates.
  *    When the cut lands inside a turn (token-budget policy), the discarded turn
@@ -294,8 +290,7 @@ export function createCompactedMessages(summary: string): ModelMessage[] {
  *    summary-first offset). The caller maps that onto the chronological channel.
  *
  * @param messages - Chronological or summary-first model-visible messages
- * @param config - Compaction configuration (keepRecentTokens budget with
- *   legacy keepRecentFlows fallback; see keep-policy.ts)
+ * @param config - Compaction configuration (keepRecentTokens budget; see keep-policy.ts)
  * @param parentAgentId - Parent agent ID for spawning summarization subagent
  * @param options - Optional summarization options (focus, todos)
  * @returns Compaction result with summary and cutIndex (relative to input messages)
@@ -324,26 +319,20 @@ export async function autoCompact(
   const hasPrevSummary = messages[0].role === "user" && extractExistingSummary([messages[0]]).existingSummary;
   const summaryOffset = hasPrevSummary ? 1 : 0;
 
-  // Find cut point relative to the input `messages` array. Token-budget policy
-  // when resolvable, legacy user-turn counting otherwise.
+  // Find the cut point relative to the input `messages` array using the
+  // token-budget policy (always tokens — see keep-policy.ts).
   let contextWindow = options?.contextWindow;
   if (!contextWindow) {
     try {
       contextWindow = manager.getAgent(parentAgentId)?.getModelInfo()?.contextWindow ?? undefined;
     } catch {
-      // Host without agent-registry access — fall back to the legacy policy.
+      // Host without agent-registry access — fall back to the default-window derivation.
     }
   }
   const policy = resolveKeepPolicy(config, contextWindow);
-  let llmCutIndex: number;
-  let turnStartIndex = -1;
-  if (policy.kind === "tokens") {
-    const cut = findCutPointByBudget(messages, policy.keepRecentTokens!, hasPrevSummary ? 0 : -1);
-    llmCutIndex = cut.cutIndex;
-    turnStartIndex = cut.turnStartIndex;
-  } else {
-    llmCutIndex = findCutPoint(messages, policy.keepRecentFlows!, hasPrevSummary ? 0 : -1);
-  }
+  const cut = findCutPointByBudget(messages, policy.keepRecentTokens, hasPrevSummary ? 0 : -1);
+  const llmCutIndex = cut.cutIndex;
+  const turnStartIndex = cut.turnStartIndex;
 
   if (llmCutIndex === 0) {
     return { compacted: false, tokensBefore, tokensAfter: tokensBefore, type: "auto" };

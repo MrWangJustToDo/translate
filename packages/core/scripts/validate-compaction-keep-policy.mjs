@@ -1,7 +1,7 @@
 /**
  * Validates token-budget keep policy: cut-point selection, pairing-safe
  * boundaries, split-turn detection, wire projection consistency, and the
- * legacy turn-count fallback.
+ * default-window fallback when no context window is known (always token-based).
  *
  * Requires a prior package build (`pnpm run build`) so imports resolve from `dist/dev.mjs`.
  *
@@ -14,7 +14,6 @@ import assert from "node:assert/strict";
 import {
   createCompactionConfig,
   deriveKeepRecentTokens,
-  findCutPoint,
   findCutPointByBudget,
   getModelVisibleMessages,
   keepPolicyProjectionOptions,
@@ -79,15 +78,19 @@ assert.deepEqual(resolveKeepPolicy({ keepRecentTokens: 10_000 }, 200_000), {
 // Small windows clamp to a usable minimum.
 assert.ok(deriveKeepRecentTokens(8_000) >= 4_000);
 
-// Legacy fallback without a context window.
-assert.deepEqual(resolveKeepPolicy({ keepRecentFlows: 3 }), { kind: "turns", keepRecentFlows: 3 });
-assert.deepEqual(resolveKeepPolicy({}), { kind: "turns", keepRecentFlows: 2 });
+// Unknown context window always falls back to a token budget derived from the
+// shared default window — never legacy turn counting (so a conversation with
+// few but large turns can always be cut).
+assert.deepEqual(resolveKeepPolicy({}, undefined), {
+  kind: "tokens",
+  keepRecentTokens: deriveKeepRecentTokens(128_000),
+});
+assert.equal(resolveKeepPolicy({}, undefined).kind, "tokens");
 
 // Projection options payload.
 assert.deepEqual(keepPolicyProjectionOptions({ kind: "tokens", keepRecentTokens: 5_000 }), {
   keepRecentTokens: 5_000,
 });
-assert.deepEqual(keepPolicyProjectionOptions({ kind: "turns", keepRecentFlows: 2 }), { keepRecentFlows: 2 });
 
 // ============================================================================
 // Trigger base — working budget (tokenThreshold), clamped to the real window
@@ -129,10 +132,8 @@ assert.deepEqual(resolveAutoCompactTrigger({ compactAtPercent: 80 }, 32_000), {
     assistant("done"),
   ];
 
-  // Legacy count-based policy cannot cut (needs 2 user turns).
-  assert.equal(findCutPoint(messages, 2), 0);
-
-  // Token-budget policy cuts inside the turn at an assistant boundary.
+  // A single turn (no second user turn) still yields a cut under the token
+  // budget, so a few-but-large-turn conversation can never get stuck.
   const cut = findCutPointByBudget(messages, 24_000);
   assert.ok(cut.cutIndex > 1, `expected mid-turn cut, got ${cut.cutIndex}`);
   assert.equal(cut.isSplitTurn, true);
@@ -206,8 +207,8 @@ assert.deepEqual(resolveAutoCompactTrigger({ compactAtPercent: 80 }, 32_000), {
   assert.ok(JSON.stringify(wireA[0]).includes("SUMMARY BODY"));
   assert.equal(wireA[wireA.length - 1].role, "assistant");
 
-  // Token-budget projection keeps less than legacy-2-turns would here.
-  const legacyWire = getModelVisibleMessages(chronologic, { keepRecentFlows: 2 });
+  // Token-budget projection keeps less than a generous legacy budget would here.
+  const legacyWire = getModelVisibleMessages(chronologic, { keepRecentTokens: 24_000 });
   assert.ok(wireA.length <= legacyWire.length);
 }
 
@@ -219,9 +220,9 @@ assert.equal(createCompactionConfig().compactAtPercent, 80, "undefined path → 
 assert.deepEqual(
   {
     tokenThreshold: createCompactionConfig().tokenThreshold,
-    keepRecentFlows: createCompactionConfig().keepRecentFlows,
+    keepRecentTokens: createCompactionConfig().keepRecentTokens,
   },
-  { tokenThreshold: 100_000, keepRecentFlows: 2 }
+  { tokenThreshold: 100_000, keepRecentTokens: undefined }
 );
 
 console.log("compaction-keep-policy validation passed");

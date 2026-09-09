@@ -923,7 +923,6 @@ export class ManagedAgent {
   setCompactionConfig(config: CompactionConfig): void {
     this.log?.debug("agent", "Setting compaction config", {
       tokenThreshold: config.tokenThreshold,
-      keepRecentFlows: config.keepRecentFlows,
     });
     this.compaction.setConfig(config);
     this.usage.setTokenLimit(config.tokenThreshold);

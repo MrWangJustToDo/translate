@@ -4,17 +4,17 @@
 
 ### Requirement: Token-budget keep window
 
-The system SHALL determine the compaction keep window by accumulated estimated token budget (`keepRecentTokens`) instead of a fixed count of user turns. When `keepRecentTokens` is not explicitly configured and the model's context window is known, the system SHALL derive it from the context window (a bounded fraction). When no context window is known, the system SHALL fall back to legacy `keepRecentFlows` turn counting.
+The system SHALL determine the compaction keep window by accumulated estimated token budget (`keepRecentTokens`) instead of a fixed count of user turns. When `keepRecentTokens` is not explicitly configured and the model's context window is known, the system SHALL derive it from the context window (a bounded fraction). When no context window is known, the system SHALL derive it from the shared default window (`DEFAULT_SUMMARIZATION_CONTEXT_WINDOW`) so the keep policy is always token-budget based — legacy `keepRecentFlows` turn counting is removed.
 
 #### Scenario: Single turn fills the context window
 
-- **WHEN** the conversation contains fewer real user turns than `keepRecentFlows` but the last turn exceeds the keep token budget
+- **WHEN** the kept window is dominated by few (but large) real user turns and the latest turn exceeds the keep token budget
 - **THEN** auto-compaction SHALL still find a cut point inside that turn and produce a summary instead of bailing out with `compacted: false`
 
 #### Scenario: Context window unknown
 
 - **WHEN** the model has no known context window and no explicit `keepRecentTokens` is configured
-- **THEN** the system SHALL keep the most recent `keepRecentFlows` user turns (legacy behavior)
+- **THEN** the system SHALL derive the keep budget from the shared default window (`DEFAULT_SUMMARIZATION_CONTEXT_WINDOW`) — never legacy turn counting — so a few-but-large-turn conversation can still be cut
 
 #### Scenario: Derived from model window
 

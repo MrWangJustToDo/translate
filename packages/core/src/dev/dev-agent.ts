@@ -97,7 +97,6 @@ export {
   COMPACTION_SYSTEM_PROMPT,
   deriveKeepRecentTokens,
   extractCompactArchivePaths,
-  findCutPoint,
   findCutPointByBudget,
   formatCompactArchivesSection,
   createCompactionSummaryUIMessage,

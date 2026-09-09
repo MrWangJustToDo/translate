@@ -16,15 +16,15 @@ const msg = (id, text) => ({
 
 function main() {
   assert.equal(lastMessageContentLen(msg("a", "hello")), 1 + 5);
-  assert.equal(policyKeyFromOptions({ keepRecentFlows: 2 }), "f:2");
   assert.equal(policyKeyFromOptions({ keepRecentTokens: 1000 }), "t:1000");
+  assert.equal(policyKeyFromOptions({}), "t:0");
 
   const messages = [msg("a", "x"), msg("b", "yy")];
-  const fp1 = wireSourceFingerprint(1, messages, "f:2");
-  const fp2 = wireSourceFingerprint(1, messages, "f:2");
+  const fp1 = wireSourceFingerprint(1, messages, "t:1000");
+  const fp2 = wireSourceFingerprint(1, messages, "t:1000");
   assert.equal(fp1, fp2);
-  assert.notEqual(fp1, wireSourceFingerprint(2, messages, "f:2"));
-  assert.notEqual(fp1, wireSourceFingerprint(1, [msg("a", "x"), msg("b", "zzz")], "f:2"));
+  assert.notEqual(fp1, wireSourceFingerprint(2, messages, "t:1000"));
+  assert.notEqual(fp1, wireSourceFingerprint(1, [msg("a", "x"), msg("b", "zzz")], "t:1000"));
 
   const cache = new WireProjectionCache();
   let computes = 0;
@@ -41,7 +41,7 @@ function main() {
   assert.equal(out1, out2);
   assert.equal(out1, wireA);
 
-  const fpMiss = wireSourceFingerprint(3, messages, "f:2");
+  const fpMiss = wireSourceFingerprint(3, messages, "t:1000");
   const wireB = [{ role: "user", content: "b" }];
   const out3 = cache.getOrCompute(fpMiss, () => {
     computes += 1;

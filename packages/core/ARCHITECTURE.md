@@ -425,7 +425,7 @@ Large tool outputs at **execute** time still use `maybeCacheOutput` (`.agents/ca
 setStatus("compacting") via beginCompaction("auto")
 emit compaction:auto-start
 autoCompact(messages, config, agentId, manager)
-  → findCutPoint (keep recent user turns)
+  → findCutPointByBudget (token-budget keep window)
   → summarizeConversation with <to_compress> + <still_in_context> (+ optional <previous-summary>)
   → writeCompactArchive (.agents/transcripts/<sessionId>/compact-<n>.md) — non-fatal; merged ## Compact archives list appended (newest-first search guidance); prior archive sections stripped from <previous-summary> input
 applyCompactionResult(channel, usage, result)
@@ -490,7 +490,7 @@ Calls exported `autoCompact` + `applyCompactionResult` directly (same engine as 
 compaction: {
   tokenThreshold: 100_000,      // default from model contextWindow (capped)
   compactAtPercent: 80,         // trigger at 80% of threshold
-  keepRecentFlows: 2,           // recent user turns kept after auto-compact
+  keepRecentTokens: undefined,  // token budget kept after auto-compact (derived from contextWindow / default 128k window)
 }
 ```
 
@@ -650,8 +650,8 @@ systemPrompts = frozen only (no dynamic tail)
 Dynamic context lives in chronological user messages so OpenAI/DeepSeek prefix cache keeps
 the frozen system + prior history stable across turns. Only changed sections are re-injected
 mid-run; a periodic refresh re-admits everything once the conversation grows past
-`DEFAULT_REFRESH_MESSAGE_THRESHOLD` since the last admit. `findCutPoint` / `findCutPointByBudget`
-skip synthetic `<ctx kind=...>` messages when counting `keepRecentFlows` / walking the budget.
+`DEFAULT_REFRESH_MESSAGE_THRESHOLD` since the last admit. `findCutPointByBudget`
+skips synthetic `<ctx kind=...>` messages when walking the token-budget boundary.
 After compaction / clear, `resetAdmittedTurnContext()` forces a fresh admission.
 
 **Subagent isolation:** subagents run the same middleware but only `SUBAGENT_ALLOWED_KINDS`

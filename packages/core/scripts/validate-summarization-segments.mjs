@@ -10,7 +10,6 @@ import {
   buildCompactionPrompt,
   buildSegmentedConversationText,
   buildSummarizationUserPrompt,
-  findCutPoint,
   STILL_IN_CONTEXT_RULES,
 } from "../dist/dev.mjs";
 
@@ -23,24 +22,11 @@ const messages = [
   { role: "assistant", content: "Updating docs" },
 ];
 
+// Cut math (pairing-safe token-budget walk) is validated separately in
+// validate-compaction-keep-policy / validate-message-chain-projection. Here we
+// pick a fixed cut index to exercise segmentation prompt construction.
 const keepRecent = 2;
-const llmCutIndex = findCutPoint(messages, keepRecent);
-assert.equal(llmCutIndex, 2, "cut should land on the second-from-last user turn");
-
-// Synthetic ctx messages must not count as a user turn for keepRecentFlows.
-const withTurnContext = [
-  { role: "user", content: "First request about auth" },
-  { role: "assistant", content: "Working on auth" },
-  {
-    role: "user",
-    content: "<ctx kind=current_date>\n<current_date>\nAug 5\n</current_date>\n</ctx>",
-  },
-  { role: "user", content: "Second request about tests" },
-  { role: "assistant", content: "Writing tests" },
-  { role: "user", content: "Third request about docs" },
-  { role: "assistant", content: "Updating docs" },
-];
-assert.equal(findCutPoint(withTurnContext, 2), 3, "skip synthetic ctx; cut on Second");
+const llmCutIndex = 2;
 
 const toCompress = messages.slice(0, llmCutIndex);
 const stillInContext = messages.slice(llmCutIndex);

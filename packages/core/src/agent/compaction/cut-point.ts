@@ -1,11 +1,9 @@
 /**
  * Cut-point helpers for auto-compaction.
  *
- * Two strategies share pairing-safe boundary rules:
- * - Legacy count walk (`findCutPoint`): keep the latest N real user turns.
- * - Token-budget walk (`findCutPointByBudget`): keep the most recent messages
- *   whose estimated tokens fit a budget, cutting only at user/assistant
- *   boundaries so tool call/result pairs are never split.
+ * Token-budget walk (`findCutPointByBudget`): keep the most recent messages
+ * whose estimated tokens fit a budget, cutting only at user/assistant
+ * boundaries so tool call/result pairs are never split.
  */
 
 import { isContextModelMessage } from "../turn-context/turn-context-message.js";
@@ -155,45 +153,4 @@ export function findCutPointByBudget(
   }
 
   return noop;
-}
-
-/**
- * Legacy cut point by counting recent real user messages.
- *
- * Walks backward counting user messages. The Nth user message from the end
- * (inclusive) becomes the cut point — everything before it gets summarized,
- * the user message itself and everything after is kept.
- *
- * Skips:
- * - `summaryMessageIndex` (optional explicit index, e.g. wire-head summary)
- * - In-chain compaction summary user messages ({@link CONVERSATION_SUMMARY_START})
- * - Synthetic `<ctx kind=...>` user messages (epoch dynamic context)
- *
- * @returns cutIndex (messages[0..cutIndex) = to summarize,
- *          messages[cutIndex..] = to keep). Returns 0 if not enough user turns.
- */
-export function findCutPoint(messages: ModelMessage[], keepRecentUserTurns: number, summaryMessageIndex = -1): number {
-  if (messages.length === 0) return 0;
-
-  let userCount = 0;
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    // Skip an explicit summary index (wire-head) and any in-chain summary markers.
-    if (i === summaryMessageIndex) continue;
-
-    const message = messages[i]!;
-    if (message.role !== "user") continue;
-    if (isCompactionSummaryModelMessage(message)) continue;
-    // Synthetic context is not a user turn — keep looking upward.
-    if (isContextModelMessage(message)) continue;
-
-    userCount++;
-    if (userCount === keepRecentUserTurns) {
-      // Cut AT this user message (inclusive) — it stays in the kept portion.
-      return i;
-    }
-  }
-
-  // Not enough user turns to warrant compaction.
-  return 0;
 }

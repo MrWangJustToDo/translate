@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import {
   AgentUIChannel,
   createCompactionSummaryUIMessage,
-  findCutPoint,
+  findCutPointByBudget,
   findLatestSummaryIndex,
   formatCompactionSummaryContent,
   getModelVisibleMessages,
@@ -23,11 +23,12 @@ const assistant = (content) => ({ role: "assistant", content });
 // No summary → identity
 {
   const messages = [user("a"), assistant("b"), user("c")];
-  const visible = getModelVisibleMessages(messages, { keepRecentFlows: 2 });
+  const visible = getModelVisibleMessages(messages, { keepRecentTokens: 4 });
   assert.deepEqual(visible, messages);
 }
 
-// Summary-first with look-back
+// Summary-first with look-back — a token budget that keeps the recent tail but
+// drops the oldest turns.
 {
   const summary = { role: "user", content: formatCompactionSummaryContent("prior work done") };
   const messages = [
@@ -47,14 +48,16 @@ const assistant = (content) => ({ role: "assistant", content });
   assert.equal(findLatestSummaryIndex(messages), 8);
   assert.ok(isCompactionSummaryModelMessage(summary));
 
-  const visible = getModelVisibleMessages(messages, { keepRecentFlows: 2 });
+  const visible = getModelVisibleMessages(messages, { keepRecentTokens: 4 });
   assert.equal(visible[0], summary);
-  assert.equal(visible[1].content, "keep1");
-  assert.equal(visible[visible.length - 2].content, "after");
+  // Oldest turns are dropped, the recent portion (after the summary) survives.
   assert.ok(!visible.some((m) => m.content === "old1"));
+  assert.ok(!visible.some((m) => m.content === "old2"));
+  assert.ok(visible.length >= 3, "summary + recent tail + newer messages projected");
+  assert.equal(visible[visible.length - 1].role, "assistant");
 }
 
-// findCutPoint skips summary + synthetic ctx
+// Budget walk skips summary + synthetic ctx as cut boundaries.
 {
   const messages = [
     user("u1"),
@@ -65,8 +68,12 @@ const assistant = (content) => ({ role: "assistant", content });
     { role: "user", content: formatCompactionSummaryContent("s") },
     user("u3"),
   ];
-  const cut = findCutPoint(messages, 2);
-  assert.equal(messages[cut].content, "u2");
+  const cut = findCutPointByBudget(messages, 4);
+  // Never cut onto a synthetic-context or summary message.
+  const cutMessage = messages[cut.cutIndex];
+  assert.ok(cutMessage, "expected a cut index");
+  assert.ok(!String(cutMessage.content ?? "").includes("<ctx kind"));
+  assert.equal(isCompactionSummaryModelMessage(cutMessage), false);
 }
 
 // UIMessage detector
@@ -95,9 +102,8 @@ const assistant = (content) => ({ role: "assistant", content });
   assert.equal(afterAppend[0].id, "u1", "channel must stay chronological after compact append");
   assert.ok(isCompactionSummaryUIMessage(afterAppend[afterAppend.length - 1]));
 
-  const wire = getModelVisibleMessages(convertMessagesToModelMessages(afterAppend), { keepRecentFlows: 2 });
+  const wire = getModelVisibleMessages(convertMessagesToModelMessages(afterAppend), { keepRecentTokens: 4 });
   assert.ok(isCompactionSummaryModelMessage(wire[0]), "wire must start with the latest summary");
-  assert.equal(typeof wire[1]?.content === "string" ? wire[1].content : "", "keep1");
   assert.ok(!wire.some((m) => typeof m.content === "string" && m.content === "old1"));
   assert.equal(channel.getMessages()[0].id, "u1", "projection must not write wire order back to the channel");
 }

@@ -42,9 +42,8 @@ export function wireSourceFingerprint(
 }
 
 /** Stable policy key matching {@link keepPolicyProjectionOptions} field names. */
-export function policyKeyFromOptions(options: { keepRecentFlows?: number; keepRecentTokens?: number }): string {
-  if (options.keepRecentTokens != null) return `t:${options.keepRecentTokens}`;
-  return `f:${options.keepRecentFlows ?? 2}`;
+export function policyKeyFromOptions(options: { keepRecentTokens?: number }): string {
+  return `t:${options.keepRecentTokens ?? 0}`;
 }
 
 export class WireProjectionCache {

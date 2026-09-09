@@ -2,7 +2,8 @@
  * Synthetic context user messages (epoch-style dynamic context).
  *
  * Persisted in UIMessage history for stability; hidden in the transcript UI.
- * Skipped by {@link findCutPoint} so compaction keepRecentFlows stays accurate.
+ * Skipped by the compaction cut-point walk (budget boundaries) so synthetic
+ * context never counts toward the kept window.
  *
  * Shell format (one line, then the section payload):
  *   <ctx kind=current_date>

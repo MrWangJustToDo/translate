@@ -20,8 +20,6 @@ import { z } from "zod";
 export const COMPACTION_CONFIG_DEFAULTS = {
   tokenThreshold: 100000,
   compactAtPercent: 80,
-  /** @deprecated Legacy fallback — prefer `keepRecentTokens`/token-budget derivation. */
-  keepRecentFlows: 2,
 } as const;
 
 // ============================================================================
@@ -37,16 +35,9 @@ export const compactionConfigSchema = z.object({
   /** Percentage of tokenThreshold at which compaction triggers (default: 80) */
   compactAtPercent: z.number().min(50).max(99).default(COMPACTION_CONFIG_DEFAULTS.compactAtPercent),
   /**
-   * @deprecated Legacy fallback: number of recent user turns (inclusive) to keep
-   * after compaction. Prefer `keepRecentTokens` — the default path — which is
-   * derived from the model context window when not explicitly configured. Only
-   * used when no context window is known (i.e. model metadata unavailable).
-   */
-  keepRecentFlows: z.number().int().positive().default(COMPACTION_CONFIG_DEFAULTS.keepRecentFlows),
-  /**
-   * Token budget for the kept window after compaction. When set, overrides
-   * `keepRecentFlows`; when unset, derived from the model context window
-   * (see keep-policy.ts) with `keepRecentFlows` as final fallback.
+   * Token budget for the kept window after compaction. When set, it wins;
+   * when unset, derived from the model context window (or the shared default
+   * window when unknown — see keep-policy.ts).
    */
   keepRecentTokens: z.number().int().positive().optional(),
   /** Tokens reserved for summary + next turn when deriving keep budget. Default is `DEFAULT_RESERVE_TOKENS` (keep-policy.ts). */
@@ -111,7 +102,7 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = { ...COMPACTION_CONFI
  * @example
  * ```typescript
  * const config = createCompactionConfig({ tokenThreshold: 50000 });
- * // Result: { tokenThreshold: 50000, compactAtPercent: 80, keepRecentFlows: 2 }
+ * // Result: { tokenThreshold: 50000, compactAtPercent: 80 }
  * ```
  */
 export function createCompactionConfig(input?: CompactionConfigInput): CompactionConfig {

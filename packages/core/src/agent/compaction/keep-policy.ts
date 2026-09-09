@@ -4,10 +4,13 @@
  * The kept window after compaction is decided by a token budget
  * (`keepRecentTokens`) instead of a fixed count of user turns. When the budget
  * is not explicitly configured and the model's context window is known, it is
- * derived as a bounded fraction of that window. When no context window is
- * known, the system falls back to legacy `keepRecentFlows` turn counting.
+ * derived as a bounded fraction of that window; when no context window is
+ * known, it is derived from the shared default window
+ * ({@link DEFAULT_SUMMARIZATION_CONTEXT_WINDOW}) so the token-budget path is
+ * always used (never legacy user-turn counting).
  */
 
+import { DEFAULT_SUMMARIZATION_CONTEXT_WINDOW } from "./summarization-budget.js";
 import { createCompactionConfig } from "./types.js";
 
 import type { CompactionConfig } from "./types.js";
@@ -38,18 +41,15 @@ export const DEFAULT_RESERVE_TOKENS = 16_384;
 /**
  * Resolved keep policy for one agent.
  *
- * - `tokens`: keep the most recent messages whose estimated tokens fit in
- *   {@link KeepPolicy.keepRecentTokens} (pairing-safe boundaries). This is the
- *   default/preferred path (driven by the model context window).
- * - `turns` (@deprecated): legacy behavior — keep the last
- *   {@link KeepPolicy.keepRecentFlows} real user turns. Only reached when no
- *   context window is known and no explicit `keepRecentTokens` is configured.
+ * Always token-budget based (`tokens`): keep the most recent messages whose
+ * estimated tokens fit in {@link KeepPolicy.keepRecentTokens} (pairing-safe
+ * boundaries). The budget is either an explicit config value, derived from the
+ * model context window, or derived from the shared default window when the
+ * window is unknown.
  */
 export interface KeepPolicy {
-  kind: "tokens" | "turns";
-  keepRecentTokens?: number;
-  /** @deprecated Legacy fallback — prefer `keepRecentTokens` (the `tokens` kind). */
-  keepRecentFlows?: number;
+  kind: "tokens";
+  keepRecentTokens: number;
 }
 
 // ============================================================================
@@ -86,9 +86,11 @@ export function deriveKeepRecentTokens(contextWindow: number, reserveTokens = DE
 /**
  * Resolve the keep policy for an agent.
  *
- * Priority: explicit `keepRecentTokens` > derived-from-context-window (tokens)
- * > legacy `keepRecentFlows` (@deprecated — only reached when no context window
- * is known and no explicit `keepRecentTokens` is configured).
+ * Priority: explicit `keepRecentTokens` > derived from the model context window
+ * > derived from the shared default window (when the window is unknown). The
+ * result is always token-budget based — never legacy user-turn counting — so a
+ * conversation dominated by few (but large) turns can always be cut on token
+ * budget rather than bailing out for not having enough turns.
  *
  * @param config - Compaction config (partial; defaults applied where relevant)
  * @param contextWindow - Model input context window in tokens, if known
@@ -99,16 +101,12 @@ export function resolveKeepPolicy(
 ): KeepPolicy {
   const resolved = createCompactionConfig(config ?? undefined);
   const explicit = resolved.keepRecentTokens;
-  if (explicit && explicit > 0) {
-    return { kind: "tokens", keepRecentTokens: explicit };
-  }
-  if (contextWindow && contextWindow > 0) {
-    return {
-      kind: "tokens",
-      keepRecentTokens: deriveKeepRecentTokens(contextWindow, resolveReserveTokens(resolved)),
-    };
-  }
-  return { kind: "turns", keepRecentFlows: resolved.keepRecentFlows };
+  const window = contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_SUMMARIZATION_CONTEXT_WINDOW;
+  return {
+    kind: "tokens",
+    keepRecentTokens:
+      explicit && explicit > 0 ? explicit : deriveKeepRecentTokens(window, resolveReserveTokens(resolved)),
+  };
 }
 
 /**
@@ -116,12 +114,9 @@ export function resolveKeepPolicy(
  * `getModelVisibleMessages` / `applyCompactionResult` options.
  */
 export function keepPolicyProjectionOptions(policy: KeepPolicy): {
-  keepRecentTokens?: number;
-  keepRecentFlows?: number;
+  keepRecentTokens: number;
 } {
-  return policy.kind === "tokens"
-    ? { keepRecentTokens: policy.keepRecentTokens }
-    : { keepRecentFlows: policy.keepRecentFlows };
+  return { keepRecentTokens: policy.keepRecentTokens };
 }
 
 /**

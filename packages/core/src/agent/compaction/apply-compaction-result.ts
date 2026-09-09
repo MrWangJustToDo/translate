@@ -9,7 +9,9 @@ import { appendChannelMessages } from "../channel-write.js";
 import { cleanupOrphanedToolCache } from "../tools/util/tool-output-cache.js";
 
 import { extractCompactionSummaryBody } from "./compaction-summary.js";
+import { deriveKeepRecentTokens } from "./keep-policy.js";
 import { createCompactionSummaryUIMessage, getModelVisibleMessages } from "./message-chain-projection.js";
+import { DEFAULT_SUMMARIZATION_CONTEXT_WINDOW } from "./summarization-budget.js";
 
 import type { CompactionResult } from "./types.js";
 import type { UsageTracker } from "../../runtime-types/hosts.js";
@@ -19,9 +21,7 @@ import type { ModelMessage } from "@tanstack/ai";
 export interface ApplyCompactionResultOptions {
   /** Called if orphaned tool-cache cleanup fails (non-fatal). */
   onCacheCleanupError?: (error: Error) => void;
-  /** @deprecated Legacy keepRecentFlows used for post-append visible window / cache cleanup (default: 2). */
-  keepRecentFlows?: number;
-  /** Token-budget keep policy; overrides keepRecentFlows when set. */
+  /** Token-budget keep policy (derived from the shared default window when unset). */
   keepRecentTokens?: number;
 }
 
@@ -42,7 +42,7 @@ export function applyCompactionResult(
     return false;
   }
 
-  const keepRecentFlows = options?.keepRecentFlows ?? 2;
+  const keepRecentTokens = options?.keepRecentTokens ?? deriveKeepRecentTokens(DEFAULT_SUMMARIZATION_CONTEXT_WINDOW);
   const summaryUI = createCompactionSummaryUIMessage(result.summary);
   // Single safe channel-append entry (shared with synthetic injection): dedupes
   // by stable id, appends at the tail, and emits the same channel write path.
@@ -51,10 +51,7 @@ export function applyCompactionResult(
 
   // Orphan cleanup must use post-append chronology (summary at end changes the wire window).
   const chronologic = convertMessagesToModelMessages(channel.getMessages());
-  const visible = getModelVisibleMessages(chronologic, {
-    keepRecentFlows,
-    ...(options?.keepRecentTokens != null ? { keepRecentTokens: options.keepRecentTokens } : {}),
-  });
+  const visible = getModelVisibleMessages(chronologic, { keepRecentTokens });
   const visibleToolIds = collectToolCallIds(visible);
   const orphanCut = firstOrphanToolIndex(chronologic, visibleToolIds);
   if (orphanCut > 0) {
