@@ -401,11 +401,14 @@ export class PlanModeController {
     const todoManager = this.deps.getTodoManager();
     if (!todoManager || this.steps.length === 0) return none;
 
-    if (!options.force && todoManager.hasTodos() && todoManager.getTitle() !== PLAN_TODO_TITLE) {
+    // Existing todos are "unrelated" when they're not plan-owned (not plan-bound
+    // and not a restored "Plan" seed). Skip seeding / treat as replaced based on
+    // that identity, not on the title string.
+    if (!options.force && todoManager.hasTodos() && todoManager.getSource() !== "plan") {
       return { seeded: false, skippedDueToExisting: true, replacedExisting: false };
     }
 
-    const replacedExisting = options.force && todoManager.hasTodos() && todoManager.getTitle() !== PLAN_TODO_TITLE;
+    const replacedExisting = options.force && todoManager.hasTodos() && todoManager.getSource() !== "plan";
 
     const verificationItems = parseVerificationItemsFromPlanMarkdown(this.planMarkdown);
 
@@ -476,7 +479,12 @@ export class PlanModeController {
     if (this.phase !== "executing") return;
     if (!this.todosSeeded) return;
     const todoManager = this.deps.getTodoManager();
-    if (!todoManager || todoManager.getTitle() !== PLAN_TODO_TITLE) return;
+    // Plan identity is tracked via plan-bound/source, not the (authorable) title
+    // string: the agent may update the list under a descriptive title while phase
+    // is still `executing`, so gating on the exact "Plan" title would leave the
+    // life/cycle stuck on `building n/m` forever. Gate on the source marker that
+    // `todo` uses (isPlanBound(), or a restored "Plan"-titled seed).
+    if (!todoManager || todoManager.getSource() !== "plan") return;
     if (!todoManager.isAllCompleted()) return;
 
     this.phase = "retro";
@@ -507,7 +515,9 @@ export class PlanModeController {
     const todoManager = this.deps.getTodoManager();
     if (!todoManager) return;
     this.setPlanTodoAutoClear(true);
-    if (this.todosSeeded && todoManager.getTitle() === PLAN_TODO_TITLE) {
+    // Plan-owned list (plan-bound, or a restored "Plan" seed) is cleared on
+    // disable/complete; an agent-owned list is only unbound.
+    if (this.todosSeeded && todoManager.getSource() === "plan") {
       todoManager.clear();
     } else if (this.todosSeeded) {
       todoManager.setPlanBound(false);

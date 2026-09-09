@@ -105,4 +105,36 @@ c2.beginExecution();
 assert.equal(todo2.isPlanBound(), true);
 assert.equal(todo2.getSource(), "plan");
 
+// --- Regression: title drift but still plan-bound -> all complete -> retro ---
+// The agent may update the todo list under a descriptive (non-"Plan") title while
+// still executing. Plan identity must be tracked via plan-bound/source, NOT the
+// title string, or the lifecycle is stuck on `building n/m` forever.
+const todo3 = new TodoManager();
+const c3 = new PlanModeController({
+  emitEvent: () => {},
+  getTodoManager: () => todo3,
+});
+c3.enable();
+await c3.applyStructuredPlan({
+  goal: "Title drift",
+  steps: ["One", "Two"],
+  keyFiles: ["src/index.ts"],
+});
+c3.beginExecution();
+assert.equal(todo3.getSource(), "plan");
+// Drift the title away from "Plan" but keep plan binding (as the todo tool does).
+todo3.update(
+  todo3.getItems().map((item) => ({
+    content: item.content,
+    status: "completed",
+    priority: item.priority,
+  })),
+  "Describe the work"
+);
+// Still plan-bound despite the drifted title.
+assert.equal(todo3.isPlanBound(), true);
+assert.equal(todo3.getTitle(), "Describe the work");
+// All complete under a drifted title must still advance to retro.
+assert.equal(c3.getPhase(), "retro", "title drift must not block executing -> retro");
+
 console.log("validate:plan-lifecycle OK");
