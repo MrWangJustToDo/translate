@@ -2,9 +2,11 @@
  * Offline validation for @my-agent/im-bridge — mock ChatAdapter + fake
  * AgentSession, no server / no Telegram required.
  *
- * Covers: inbound → dispatch, approval button → respondApproval, ask_user
- * button → addToolResult, TTL auto-deny, allowlist rejection, restart recovery
- * (sessions.json → host.connect), code-block-aware splitting, finalize split.
+ * Covers: inbound → dispatch, approval button → respondApproval (buttons ride
+ * on the tool call's own message), ask_user button → addToolResult, TTL
+ * auto-deny, allowlist rejection, restart recovery (sessions.json →
+ * host.connect), code-block-aware splitting, ordered non-streaming segment
+ * rendering (text sealed → posted; final answer at finalize).
  *
  * Run after `pnpm build:im-bridge`:
  *   node packages/im-bridge/scripts/validate-bridge.mjs
@@ -15,8 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { createImBridge, parseBridgeConfig, SessionResolver, splitMessage, StreamUpdater } =
-  await import("../dist/index.mjs");
+const { createImBridge, parseBridgeConfig, SessionResolver, splitMessage } = await import("../dist/index.mjs");
 
 // ============================================================================
 // Fakes
@@ -76,12 +77,15 @@ function createMockAdapter() {
   let buttonHandler = null;
   const sent = [];
   const edits = [];
+  /** Unified send/edit chronology — ordering assertions read this. */
+  const log = [];
   let counter = 0;
   const adapter = {
     platform: "mock",
     caps: { markdown: false, editMessage: true, buttons: true, maxTextLength: 4096, streaming: "edit" },
     sent,
     edits,
+    log,
     async start() {},
     async stop() {},
     onMessage(handler) {
@@ -93,6 +97,7 @@ function createMockAdapter() {
     async sendText(target, text, options) {
       const ref = { messageId: `m${++counter}`, chat: target };
       sent.push({ ref, text, buttons: options?.buttons });
+      log.push({ op: "send", messageId: ref.messageId, text, buttons: options?.buttons });
       return ref;
     },
     async sendButtons(target, text, buttons) {
@@ -100,6 +105,7 @@ function createMockAdapter() {
     },
     async editMessage(target, messageId, text, options) {
       edits.push({ messageId, text, buttons: options?.buttons });
+      log.push({ op: "edit", messageId, text, buttons: options?.buttons });
     },
     async setTyping() {},
     async emitMessage(msg) {
@@ -119,7 +125,6 @@ function makeConfig(env = {}) {
   return parseBridgeConfig({
     REMOTE_SESSION: "http://localhost:59999",
     TELEGRAM_BOT_TOKEN: "test-token",
-    IM_BRIDGE_EDIT_INTERVAL_MS: "10",
     IM_BRIDGE_APPROVAL_TTL_MS: "120",
     IM_BRIDGE_DATA_DIR: join(tmpBase, env.dirSuffix ?? "default"),
     ...env,
@@ -170,8 +175,12 @@ async function startBridge(env = {}) {
     onError: (error) => errors.push(error),
   });
   await bridge.start();
+  startedBridges.push(bridge);
   return { config, host, adapter, errors, bridge };
 }
+
+/** Stopped after the suite so live cycles' typing/TTL timers don't hang the process. */
+const startedBridges = [];
 
 // ============================================================================
 // Scenarios
@@ -196,9 +205,13 @@ async function testApprovalButton() {
 
   session.state.messages = [{ role: "assistant", parts: [approvalPart()] }];
   session.emit("messages", session.state.messages);
-  await waitFor(() => adapter.sent.some((entry) => entry.buttons?.length > 0), 2000, "approval message");
-  const approvalMsg = adapter.sent.find((entry) => entry.buttons?.length > 0);
-  const buttons = approvalMsg.buttons;
+  await waitFor(() => adapter.log.some((entry) => entry.buttons?.length > 0), 2000, "approval message");
+  const approvalEntry = adapter.log.find((entry) => entry.buttons?.length > 0);
+  // Merged rendering: the buttons ride on the tool call's own message (the
+  // first segment claims the ⏳ placeholder via edit, so read the unified log).
+  assert.ok(approvalEntry.text.includes("run_command"), "tool line and buttons share one message");
+  assert.ok(approvalEntry.text.includes("awaiting approval"), "tool line shows the pending state");
+  const buttons = approvalEntry.buttons;
   const approve = buttons.find((button) => button.label === "✅ Approve");
   const deny = buttons.find((button) => button.label === "❌ Deny");
   assert.ok(approve && deny, "approve/deny buttons rendered");
@@ -206,7 +219,7 @@ async function testApprovalButton() {
   await adapter.emitButton({
     platform: "mock",
     chat: CHAT,
-    messageId: approvalMsg.ref.messageId,
+    messageId: approvalEntry.messageId,
     userId: "u1",
     data: approve.data,
     ack: async () => {},
@@ -219,7 +232,13 @@ async function testApprovalButton() {
   const command = session.dispatched.find((cmd) => cmd.type === "respondApproval");
   assert.equal(command.approvalId, "ap1");
   assert.equal(command.approved, true);
-  console.log("✓ approval button → dispatch respondApproval(approved=true)");
+  // Click feedback: the buttons drop from the tool message immediately.
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.messageId === approvalEntry.messageId && entry.buttons === undefined),
+    2000,
+    "buttons dropped after click"
+  );
+  console.log("✓ approval button on the tool call's message → respondApproval(approved=true), buttons dropped");
 }
 
 async function testAskUserButton() {
@@ -230,9 +249,10 @@ async function testAskUserButton() {
 
   session.state.messages = [{ role: "assistant", parts: [askUserPart()] }];
   session.emit("messages", session.state.messages);
-  await waitFor(() => adapter.sent.some((entry) => entry.buttons?.length > 0), 2000, "ask_user message");
-  const askMsg = adapter.sent.find((entry) => entry.buttons?.length > 0);
-  const buttons = askMsg.buttons;
+  await waitFor(() => adapter.log.some((entry) => entry.buttons?.length > 0), 2000, "ask_user message");
+  const askEntry = adapter.log.find((entry) => entry.buttons?.length > 0);
+  assert.ok(askEntry.text.includes("ask_user"), "question line and buttons share one message");
+  const buttons = askEntry.buttons;
   assert.deepEqual(
     buttons.map((button) => button.label),
     ["Alpha", "Beta"]
@@ -241,7 +261,7 @@ async function testAskUserButton() {
   await adapter.emitButton({
     platform: "mock",
     chat: CHAT,
-    messageId: askMsg.ref.messageId,
+    messageId: askEntry.messageId,
     userId: "u1",
     data: buttons[1].data,
     ack: async () => {},
@@ -265,16 +285,20 @@ async function testOneMessagePerApproval() {
   session.state.messages = [{ role: "assistant", parts: [partA, partB] }];
   session.emit("messages", session.state.messages);
   await waitFor(
-    () => adapter.sent.filter((entry) => entry.buttons?.length > 0).length === 2,
+    () => new Set(adapter.log.filter((entry) => entry.buttons?.length > 0).map((entry) => entry.messageId)).size === 2,
     2000,
     "two approval messages"
   );
-  const approvalMsgs = adapter.sent.filter((entry) => entry.buttons?.length > 0);
-  for (const msg of approvalMsgs) {
-    assert.equal(msg.buttons.length, 2, "one approval = exactly 2 buttons (approve/deny)");
+  const approvalEntries = [
+    ...new Map(
+      adapter.log.filter((entry) => entry.buttons?.length > 0).map((entry) => [entry.messageId, entry])
+    ).values(),
+  ];
+  for (const entry of approvalEntries) {
+    assert.equal(entry.buttons.length, 2, "one approval = exactly 2 buttons (approve/deny)");
   }
-  assert.notEqual(approvalMsgs[0].ref.messageId, approvalMsgs[1].ref.messageId, "distinct messages");
-  console.log("✓ two pending approvals → two dedicated messages, one approval each");
+  assert.notEqual(approvalEntries[0].messageId, approvalEntries[1].messageId, "distinct messages");
+  console.log("✓ two pending approvals → two dedicated tool messages, one approval each");
 }
 
 async function testTtlAutoDeny() {
@@ -325,11 +349,23 @@ function textMsg(role, id, text) {
   return { role, id, createdAt: new Date(), parts: [{ type: "text", content: text }] };
 }
 
+function toolPart(id, name, input, output) {
+  return {
+    type: "tool-call",
+    id,
+    name,
+    arguments: JSON.stringify(input),
+    state: output === undefined ? "input-complete" : "output-available",
+    ...(output !== undefined ? { output } : {}),
+  };
+}
+
 /**
  * The status flickers `thinking`/`responding`/`running` many times mid-run and
  * pauses at `awaiting_user` for ask_user. Only a finished run (`completed` /
  * `error` / `aborted`) may finalize — finalizing earlier freezes the
  * placeholder and unsubscribes, so the reply only surfaces one message later.
+ * Non-streaming additionally means: unsealed text is NOT posted mid-run.
  */
 async function testNoPrematureFinalizeOnStatusFlicker() {
   const { adapter, host } = await startBridge();
@@ -343,31 +379,36 @@ async function testNoPrematureFinalizeOnStatusFlicker() {
   }
   await new Promise((resolve) => setTimeout(resolve, 700)); // > IDLE_FINALIZE_DELAY_MS
 
-  // The cycle must still be live: a messages event still edits the placeholder.
+  // The cycle must still be live — and non-streaming: the (still unsealed)
+  // text must not have been posted mid-run.
   session.state.messages = [textMsg("user", "u1", "run"), textMsg("assistant", "a1", "streamed content")];
   session.emit("messages", session.state.messages);
-  await waitFor(
-    () => adapter.edits.some((entry) => entry.text.includes("streamed content")),
-    2000,
-    "placeholder still streaming after status flicker"
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(
+    !adapter.log.some((entry) => entry.text.includes("streamed content")),
+    "unsealed text is not posted mid-run (no streaming)"
   );
 
-  // Only a finished run finalizes.
+  // Only a finished run finalizes — the answer lands on the placeholder.
   session.state.status = "completed";
   session.emit("state", { status: "completed" });
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.text.includes("streamed content")),
+    4000,
+    "final render on completion"
+  );
   assert.ok(adapter.edits.at(-1).text.includes("streamed content"), "final content rendered on completion");
 
-  // After finalize the updater is closed and the subscription torn down.
-  const editsAfterFinalize = adapter.edits.length;
+  // After finalize the renderer is closed and the subscription torn down.
+  const logAfterFinalize = adapter.log.length;
   session.state.messages = [...session.state.messages, textMsg("assistant", "a2", "LATE")];
   session.emit("messages", session.state.messages);
   await new Promise((resolve) => setTimeout(resolve, 150));
   assert.ok(
-    !adapter.edits.slice(editsAfterFinalize).some((entry) => entry.text.includes("LATE")),
-    "updater closed and unsubscribed after finalize"
+    !adapter.log.slice(logAfterFinalize).some((entry) => entry.text.includes("LATE")),
+    "renderer closed and unsubscribed after finalize"
   );
-  console.log("✓ status flicker (idle reconcile/thinking/responding/awaiting_user) does not finalize; completed does");
+  console.log("✓ status flicker does not finalize; completed does; no mid-run streaming");
 }
 
 /**
@@ -396,15 +437,126 @@ async function testNoStaleInitialRender() {
     "new placeholder must not flash the previous run from a stale snapshot"
   );
 
-  // Once the current run lands (fresh SSE connection's first payload), it renders.
+  // Once the current run lands (fresh SSE connection's first payload) and the
+  // run finishes, it renders on the placeholder.
   session.state.messages = [
     ...session.state.messages,
     textMsg("user", "u2", "second"),
     textMsg("assistant", "a2", "CURRENT RUN"),
   ];
   session.emit("messages", session.state.messages);
-  await waitFor(() => adapter.edits.some((entry) => entry.text.includes("CURRENT RUN")), 2000, "current run render");
+  session.state.status = "completed";
+  session.emit("state", { status: "completed" });
+  await waitFor(() => adapter.edits.some((entry) => entry.text.includes("CURRENT RUN")), 4000, "current run render");
   console.log("✓ stale snapshot does not flash the previous run on a new placeholder");
+}
+
+/**
+ * Ordered non-streaming rendering: assistant text and tool lines alternate in
+ * actual part order; running tools wait; the unsealed final answer posts only
+ * at finalize.
+ */
+async function testOrderedSegments() {
+  const { adapter, host } = await startBridge();
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "interleaved", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  session.state.messages = [
+    textMsg("user", "u1", "interleaved"),
+    {
+      role: "assistant",
+      id: "a1",
+      parts: [
+        toolPart("t1", "run_command", { command: "pnpm build" }, { success: true }),
+        { type: "text", content: "build ok" },
+        toolPart("t2", "grep", { pattern: "x" }, { matches: [1, 2] }),
+        { type: "text", content: "final answer" },
+      ],
+    },
+  ];
+  session.emit("messages", session.state.messages);
+  await waitFor(() => adapter.log.filter((entry) => entry.op === "send").length === 3, 2000, "sealed segments posted");
+
+  // Placeholder (⏳ send) claimed by the first tool line via edit; then text, tool.
+  const claim = adapter.log.find((entry) => entry.op === "edit" && entry.messageId === adapter.sent[0].ref.messageId);
+  assert.ok(claim, "first segment claims the placeholder");
+  assert.ok(claim.text.includes("run_command") && claim.text.includes("✓"), "tool line first");
+  const sends = adapter.log.filter((entry) => entry.op === "send" && entry.text !== "⏳");
+  assert.equal(sends[0].text, "build ok", "text second");
+  assert.ok(sends[1].text.includes("grep") && sends[1].text.includes("2 matches"), "tool third");
+  assert.ok(
+    !adapter.log.some((entry) => entry.text.includes("final answer")),
+    "unsealed final text waits for finalize"
+  );
+
+  session.state.status = "completed";
+  session.emit("state", { status: "completed" });
+  await waitFor(() => adapter.log.some((entry) => entry.text.includes("final answer")), 4000, "answer at finalize");
+  console.log("✓ segments post in part order (tool/text interleaved); answer lands at finalize");
+}
+
+/** A running tool without an interaction must not post a mid-state line. */
+async function testRunningToolNotPosted() {
+  const { adapter, host } = await startBridge();
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "work", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  session.state.messages = [
+    textMsg("user", "u1", "work"),
+    {
+      role: "assistant",
+      id: "a1",
+      parts: [{ type: "text", content: "checking" }, toolPart("t1", "run_command", { command: "sleep 5" })],
+    },
+  ];
+  session.emit("messages", session.state.messages);
+  await waitFor(() => adapter.log.some((entry) => entry.text === "checking"), 2000, "sealed text posted");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(
+    !adapter.log.some((entry) => entry.text.includes("run_command")),
+    "running tool without interaction is not posted"
+  );
+  console.log("✓ running tool (no interaction) waits; only sealed text posts");
+}
+
+/** Oversized final answer: head claims the placeholder, the rest follow up. */
+async function testFinalizeSplit() {
+  const { adapter, host } = await startBridge();
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "big reply", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  session.state.messages = [textMsg("assistant", "a1", "a".repeat(9000))];
+  session.emit("messages", session.state.messages);
+  session.state.status = "completed";
+  session.emit("state", { status: "completed" });
+  await waitFor(
+    () => adapter.sent.filter((entry) => entry.text.startsWith("a")).length === 2,
+    4000,
+    "follow-up chunks"
+  );
+  const followUps = adapter.sent.filter((entry) => entry.text.startsWith("a"));
+  assert.ok(followUps[0].text.length <= 4096 && followUps[1].text.length <= 4096);
+  assert.ok(
+    adapter.edits.some((entry) => entry.text.startsWith("a") && entry.messageId === adapter.sent[0].ref.messageId),
+    "head chunk claims the placeholder"
+  );
+  console.log("✓ finalize split: oversized answer → head edit + follow-up messages");
+}
+
+/** A run that finishes without ever rendering a segment replaces the ⏳. */
+async function testEmptyRunFinalizeFallback() {
+  const { adapter, host } = await startBridge();
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "nothing", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  session.state.status = "completed";
+  session.emit("state", { status: "completed" });
+  await waitFor(() => adapter.edits.some((entry) => entry.text === "✅ done"), 4000, "fallback edit");
+  console.log("✓ empty run finalizes the placeholder to ✅ done");
 }
 
 async function testRestartRecovery() {
@@ -445,24 +597,6 @@ async function testSplitter() {
   console.log(`✓ splitter: ${chunks.length} chunks, fences balanced, content preserved`);
 }
 
-async function testFinalizeSplit() {
-  const { adapter } = await startBridge();
-  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "big reply", raw: null });
-  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
-  const updater = new StreamUpdater({
-    adapter,
-    reply: adapter.sent[0].ref,
-    editIntervalMs: 10,
-    onError: () => {},
-  });
-  updater.update("a".repeat(9000));
-  await updater.finalize();
-  const followUps = adapter.sent.filter((entry) => entry.text.startsWith("a"));
-  assert.equal(followUps.length, 2, "9000 chars → 1 follow-up chunk beyond head");
-  assert.ok(followUps[0].text.length <= 4096 && followUps[1].text.length <= 4096);
-  console.log("✓ finalize split: oversized content → head edit + follow-up messages");
-}
-
 // ============================================================================
 
 const tests = [
@@ -475,9 +609,12 @@ const tests = [
   testSteerWhileRunning,
   testNoPrematureFinalizeOnStatusFlicker,
   testNoStaleInitialRender,
+  testOrderedSegments,
+  testRunningToolNotPosted,
   testRestartRecovery,
   testSplitter,
   testFinalizeSplit,
+  testEmptyRunFinalizeFallback,
 ];
 
 let failed = 0;
@@ -490,6 +627,10 @@ for (const test of tests) {
   }
 }
 
+// Tear down live cycles so typing/TTL timers don't hold the process open.
+for (const bridge of startedBridges) {
+  await bridge.stop().catch(() => {});
+}
 rmSync(tmpBase, { recursive: true, force: true });
 
 if (failed > 0) {

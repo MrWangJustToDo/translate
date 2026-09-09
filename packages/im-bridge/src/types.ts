@@ -97,6 +97,8 @@ export type PendingInteraction =
       toolName: string;
       /** Short human summary of what is being approved. */
       question: string;
+      /** Renderer segment the buttons ride on (`${message.id}:${partIndex}`) — the tool call's own message. */
+      segmentKey: string;
     }
   | {
       kind: "ask_user";
@@ -105,6 +107,8 @@ export type PendingInteraction =
       question: string;
       options: string[];
       multiSelect: boolean;
+      /** Renderer segment the buttons ride on (`${message.id}:${partIndex}`) — the tool call's own message. */
+      segmentKey: string;
     };
 
 /** Payload encoded into button `data` (kept tiny for the 64-byte callback limit). */

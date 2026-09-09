@@ -32,8 +32,6 @@ export const bridgeConfigSchema = z.object({
   model: z.string().optional(),
   /** Local-mode OS sandbox (`SANDBOX_ENV`: local | native). Remote mode ignores this. */
   sandbox: z.enum(["local", "native"]).default("local"),
-  /** Min interval between progress-row edits in ms. 2s keeps Telegram edit rate limits comfortable. */
-  editIntervalMs: z.number().int().positive().default(2000),
   /** Pending approval / ask_user TTL in ms (auto-deny on expiry). 5 min — IM users answer async. */
   approvalTtlMs: z.number().int().positive().default(300_000),
   /** Prefix for created agent session names (display only). */
@@ -72,7 +70,6 @@ export function parseBridgeConfig(env: Record<string, string | undefined> = proc
     dataDir: env.IM_BRIDGE_DATA_DIR,
     model: env.IM_BRIDGE_MODEL?.trim() === "" ? undefined : env.IM_BRIDGE_MODEL,
     sandbox: env.SANDBOX_ENV === "native" ? "native" : "local",
-    editIntervalMs: toPositiveInt(env.IM_BRIDGE_EDIT_INTERVAL_MS),
     approvalTtlMs: toPositiveInt(env.IM_BRIDGE_APPROVAL_TTL_MS),
     sessionNamePrefix: env.IM_BRIDGE_SESSION_NAME_PREFIX,
   });

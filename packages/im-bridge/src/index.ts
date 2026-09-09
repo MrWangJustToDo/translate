@@ -18,10 +18,17 @@ export {
   PendingInteractionStore,
   type PendingRecord,
 } from "./interaction/pending.js";
-export { renderReply, renderResolved, scanPendingInteractions, type RenderedReply } from "./interaction/render.js";
+export {
+  renderReply,
+  renderRunSegments,
+  renderResolved,
+  scanPendingInteractions,
+  type RenderedReply,
+  type RunSegment,
+} from "./interaction/render.js";
 export { SessionResolver, sessionKeyOf, type ResolvedSession, type SessionEntry } from "./session-resolver.js";
 export { splitMessage } from "./streaming/splitter.js";
-export { StreamUpdater, type StreamUpdaterOptions } from "./streaming/stream-updater.js";
+export { RunRenderer, type RunRendererOptions } from "./streaming/run-renderer.js";
 export { TelegramAdapter, type TelegramAdapterOptions } from "./adapters/telegram.js";
 export type {
   AdapterCaps,

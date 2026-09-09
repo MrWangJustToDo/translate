@@ -30,6 +30,19 @@ export interface RenderedReply {
   pending: PendingInteraction[];
 }
 
+/** One ordered outbound unit of a run: a text part or a tool status line. */
+export interface RunSegment {
+  /** Stable identity: `${message.id}:${partIndex}` — parts stream append-only. */
+  key: string;
+  kind: "text" | "tool";
+  /** Rendered text (raw text content / tool status line). */
+  text: string;
+  /** Tool segment only: no further state change expected (output landed / denied). */
+  done: boolean;
+  /** Tool segment only: awaiting approval or an ask_user answer. */
+  pending: boolean;
+}
+
 function isToolCallPart(part: UIMessage["parts"][number]): part is ToolCallPart {
   return part.type === "tool-call";
 }
@@ -228,8 +241,9 @@ export function scanPendingInteractions(messages: UIMessage[]): PendingInteracti
   const pending: PendingInteraction[] = [];
   for (const message of messages) {
     if (message.role !== "assistant") continue;
-    for (const part of message.parts) {
+    for (const [partIndex, part] of message.parts.entries()) {
       if (!isToolCallPart(part)) continue;
+      const segmentKey = `${message.id}:${partIndex}`;
       if (part.name === ASK_USER_TOOL && part.state === "input-complete" && part.output === undefined) {
         const input = parseInputJson(part) ?? {};
         pending.push({
@@ -238,6 +252,7 @@ export function scanPendingInteractions(messages: UIMessage[]): PendingInteracti
           question: typeof input.question === "string" ? input.question : "(no question)",
           options: Array.isArray(input.options) ? input.options.filter((o): o is string => typeof o === "string") : [],
           multiSelect: input.multiSelect === true,
+          segmentKey,
         });
         continue;
       }
@@ -247,6 +262,7 @@ export function scanPendingInteractions(messages: UIMessage[]): PendingInteracti
           approvalId: part.approval.id,
           toolName: part.name,
           question: toolLabel(part),
+          segmentKey,
         });
       }
     }
@@ -254,23 +270,50 @@ export function scanPendingInteractions(messages: UIMessage[]): PendingInteracti
   return pending;
 }
 
-/** Render the current run: assistant texts + tool status lines + pending interactions. */
-export function renderReply(messages: UIMessage[]): RenderedReply {
-  const run = currentRunMessages(messages);
-  const pending = scanPendingInteractions(run);
-
-  const lines: string[] = [];
-  for (const message of run) {
-    for (const part of message.parts) {
+/**
+ * Project the current run onto ordered outbound segments — assistant text and
+ * tool status lines alternate exactly as the app's message view renders them.
+ * The renderer posts each segment as its own chat message in this order.
+ */
+export function renderRunSegments(messages: UIMessage[]): RunSegment[] {
+  const segments: RunSegment[] = [];
+  for (const message of currentRunMessages(messages)) {
+    for (const [partIndex, part] of message.parts.entries()) {
       if (part.type === "text") {
-        if (part.content.trim().length > 0) lines.push(part.content);
+        if (part.content.trim().length === 0) continue;
+        segments.push({
+          key: `${message.id}:${partIndex}`,
+          kind: "text",
+          text: part.content,
+          done: false,
+          pending: false,
+        });
       } else if (isToolCallPart(part)) {
-        lines.push(toolStatusLine(part));
+        const pending =
+          (part.name === ASK_USER_TOOL && part.output === undefined) ||
+          (part.approval?.needsApproval === true && part.approval.approved === undefined);
+        segments.push({
+          key: `${message.id}:${partIndex}`,
+          kind: "tool",
+          text: toolStatusLine(part),
+          done: part.output !== undefined || part.approval?.approved === false,
+          pending,
+        });
       }
     }
   }
+  return segments;
+}
 
-  return { text: lines.join("\n\n").trim(), pending };
+/** Render the current run: assistant texts + tool status lines + pending interactions. */
+export function renderReply(messages: UIMessage[]): RenderedReply {
+  return {
+    text: renderRunSegments(messages)
+      .map((segment) => segment.text)
+      .join("\n\n")
+      .trim(),
+    pending: scanPendingInteractions(currentRunMessages(messages)),
+  };
 }
 
 /** Tool status lines only — the live progress row when answer streaming is off. */

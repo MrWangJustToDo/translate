@@ -3,11 +3,11 @@
  *
  * Inbound:  message → allowlist → session resolver → dispatch send/steer
  *           (steer while the agent pump is running, send when idle).
- * Outbound: subscribe messages/state per reply cycle → renderRunToolLines →
- *           StreamUpdater edits the progress row in place; the answer is sent
- *           fresh once the run finishes; pending ask_user / approval
- *           interactions render as buttons backed by PendingInteractionStore
- *           (TTL auto-deny).
+ * Outbound: subscribe messages/state per reply cycle → RunRenderer posts each
+ *           run segment (assistant text / tool line) as its own message in
+ *           actual part order — no streaming edits; only interaction messages
+ *           (approval / ask_user, whose buttons ride on the tool call's own
+ *           message) update in place once answered.
  *
  * The runtime is transport-agnostic: adapters translate platforms, the runtime
  * owns orchestration. Sessions are remote (`createRemoteAgentSessionHost`) by
@@ -19,20 +19,13 @@ import { createRemoteAgentSessionHost } from "@my-agent/server/client";
 
 import { AccessControl } from "./access.js";
 import { decodeButtonPayload, PendingInteractionStore, type PendingRecord } from "./interaction/pending.js";
-import {
-  currentRunMessages,
-  renderResolved,
-  renderRunAnswer,
-  renderRunToolLines,
-  scanPendingInteractions,
-} from "./interaction/render.js";
+import { currentRunMessages, scanPendingInteractions } from "./interaction/render.js";
 import { createLocalSessionHost } from "./local-host.js";
 import { SessionResolver, sessionKeyOf } from "./session-resolver.js";
-import { splitMessage } from "./streaming/splitter.js";
-import { StreamUpdater } from "./streaming/stream-updater.js";
+import { RunRenderer } from "./streaming/run-renderer.js";
 
 import type { BridgeConfig } from "./config.js";
-import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage, PendingInteraction } from "./types.js";
+import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage } from "./types.js";
 import type { AgentSession, AgentSessionCommand, AgentSessionHost } from "@my-agent/core";
 import type { UIMessage } from "@tanstack/ai";
 
@@ -49,15 +42,15 @@ interface ReplyCycle {
   chat: ChatTarget;
   /** User that started the cycle — allowed to answer its interactions. */
   userId: string;
-  /** null until the placeholder message resolves; renders buffer meanwhile. */
-  updater: StreamUpdater | null;
-  /** Latest render while `updater` is null; the final text once retired. */
-  pendingText: string;
+  /** null while the "⏳" placeholder is in flight; buffered events sync once it resolves. */
+  renderer: RunRenderer | null;
+  /** Latest messages payload while `renderer` is null. */
+  bufferedMessages: UIMessage[] | null;
   /** Retired (finalized / healed over) — late events and edits are ignored. */
   closed: boolean;
   unsubscribe: () => void;
   finalizeTimer: ReturnType<typeof setTimeout> | null;
-  /** Periodic sendChatAction while the run works but nothing streamed yet. */
+  /** Periodic sendChatAction while the run works but nothing posted yet. */
   typingTimer: ReturnType<typeof setInterval> | null;
   /** Interaction ids already registered as buttons on this cycle. */
   registered: Set<string>;
@@ -259,14 +252,14 @@ export class BridgeRuntime {
     // of spawning a second placeholder streaming the same run.
     if (this.cycles.has(chatKey)) return null;
     // Subscribe SYNCHRONOUSLY (before any dispatch) so no run event is missed;
-    // the placeholder message goes out in parallel and edits flush once it
-    // resolves (buffered in `pendingText` until then).
+    // the placeholder message goes out in parallel and buffered events flush
+    // once it resolves.
     const cycle: ReplyCycle = {
       chatKey,
       chat: msg.chat,
       userId: msg.userId,
-      updater: null,
-      pendingText: "",
+      renderer: null,
+      bufferedMessages: null,
       closed: false,
       unsubscribe: session.subscribe((event) => this.onSessionEvent(cycle, event), {
         channels: ["messages", "state"],
@@ -277,13 +270,11 @@ export class BridgeRuntime {
     };
     this.cycles.set(chatKey, cycle);
     // Typing heartbeat: sendChatAction expires after ~5s — re-send while the
-    // run works but nothing has streamed into the reply yet, so the chat shows
-    // "typing…" during thinking/tool phases instead of looking dead.
+    // run works but nothing has been posted yet, so the chat shows "typing…"
+    // during thinking/tool phases instead of looking dead.
     if (this.adapter.setTyping) {
       cycle.typingTimer = setInterval(() => {
-        // No-stream: typing runs for the whole run (nothing answers until
-        // the final message lands).
-        if (cycle.closed) {
+        if (cycle.closed || cycle.renderer?.hasOutput) {
           if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
           cycle.typingTimer = null;
           return;
@@ -294,24 +285,28 @@ export class BridgeRuntime {
     void this.adapter
       .sendText(msg.chat, "⏳")
       .then((reply) => {
-        const updater = new StreamUpdater({
+        const renderer = new RunRenderer({
           adapter: this.adapter,
-          reply,
-          editIntervalMs: this.config.editIntervalMs,
+          chat: msg.chat,
+          placeholderRef: reply,
           onError: this.onError,
         });
-        cycle.updater = updater;
+        cycle.renderer = renderer;
+        const buffered = cycle.bufferedMessages;
+        cycle.bufferedMessages = null;
+        if (buffered) renderer.sync(buffered);
         if (cycle.closed) {
-          updater.update(cycle.pendingText || "✅ done");
-          void updater.finalize().catch(() => {});
-        } else if (cycle.pendingText) {
-          updater.update(cycle.pendingText);
+          // The run finished while the placeholder was in flight — flush what
+          // buffered; interactions can no longer be answered.
+          void renderer.finalize().catch(() => {});
+          return;
         }
+        if (buffered) this.registerInteractions(cycle, buffered);
       })
       .catch((error) => {
         // The placeholder send failed (transient 429 flood control / blocked
         // bot). Keep the cycle alive: renderCycle keeps buffering into
-        // `pendingText`, and retireCycle delivers the final text directly —
+        // `bufferedMessages`, and retireCycle delivers the final text directly —
         // the run's reply must not be silently lost because the placeholder
         // never landed.
         this.onError(error);
@@ -343,8 +338,24 @@ export class BridgeRuntime {
 
   private renderCycle(cycle: ReplyCycle, messages: UIMessage[]): void {
     if (cycle.closed) return;
-    const pending = scanPendingInteractions(currentRunMessages(messages));
-    for (const interaction of pending) {
+    if (cycle.renderer === null) {
+      // Placeholder still in flight — buffer; synced once it resolves.
+      cycle.bufferedMessages = messages;
+      return;
+    }
+    cycle.renderer.sync(messages);
+    this.registerInteractions(cycle, messages);
+  }
+
+  /**
+   * Register pending interactions as buttons ON their tool segment's message
+   * (the same message that shows `📎 … · ⏸ awaiting approval`). Registration
+   * is synchronous before the renderer's post lands, so a button click can
+   * never race the pending record's creation.
+   */
+  private registerInteractions(cycle: ReplyCycle, messages: UIMessage[]): void {
+    if (cycle.renderer === null) return;
+    for (const interaction of scanPendingInteractions(currentRunMessages(messages))) {
       const id = interaction.kind === "approval" ? interaction.approvalId : interaction.toolCallId;
       if (cycle.registered.has(id)) continue;
       cycle.registered.add(id);
@@ -353,25 +364,9 @@ export class BridgeRuntime {
       // must only ever be posted once.
       if (this.postedInteractionIds.has(id)) continue;
       this.rememberPostedInteraction(id);
-      // One dedicated message per interaction — buttons never mix across
-      // approvals/ask_user on a shared streaming message.
-      void this.postInteractionMessage(cycle, interaction);
-    }
-    // The progress row: tool status lines only — the answer is delivered
-    // fresh (complete) once the run finishes.
-    const progress = renderRunToolLines(messages);
-    if (cycle.updater) cycle.updater.update(progress);
-    else cycle.pendingText = progress;
-  }
-
-  private async postInteractionMessage(cycle: ReplyCycle, pending: PendingInteraction): Promise<void> {
-    try {
-      // Register BEFORE sending so a button click can never race the pending
-      // record's creation (renderCycle fires from a synchronous event; a fast
-      // callback could otherwise resolve before the send completes).
       const requestId = this.pending.nextRequestId();
-      const record = this.pending.register(
-        pending,
+      this.pending.register(
+        interaction,
         {
           chatKey: cycle.chatKey,
           chat: cycle.chat,
@@ -380,11 +375,7 @@ export class BridgeRuntime {
         },
         requestId
       );
-      const buttons = this.pending.buttonsFor(pending, requestId);
-      const ref = await this.adapter.sendButtons(cycle.chat, describePending(pending), buttons);
-      record.messageId = ref.messageId;
-    } catch (error) {
-      this.onError(error);
+      cycle.renderer.setButtons(interaction.segmentKey, this.pending.buttonsFor(interaction, requestId));
     }
   }
 
@@ -408,21 +399,22 @@ export class BridgeRuntime {
     // The finalize decision was made up to IDLE_FINALIZE_DELAY_MS ago —
     // re-check before retiring: a steer continuation or the next run may have
     // flipped the status back to active, and retiring now would kill the live
-    // stream and lose the run's output (rendered as the empty "✅ done").
+    // run and lose its output (rendered as the empty "✅ done").
     const status = this.activeSessions.get(cycle.chatKey)?.getSnapshot().status ?? "idle";
     if (isActiveStatus(status)) return;
-    const messages = this.activeSessionMessages(cycle.chatKey);
-    await this.retireCycle(cycle, renderRunToolLines(messages), renderRunAnswer(messages) || "✅ done");
+    await this.retireCycle(cycle);
   }
 
   /**
-   * Retire a cycle: write the final text, close the updater, unsubscribe.
+   * Retire a cycle: flush the segments' final content (unsealed text, split
+   * when over the platform limit), close the renderer, unsubscribe. Segments
+   * are already posted in part order — the run's answer needs no separate
+   * final dump.
    *
-   * `progressText` lands on the streaming row. `answerText` (no-stream mode)
-   * is the run's answer, delivered as fresh complete message(s) — split when
-   * over the platform limit.
+   * `fatalText` (transport failure / expired session) replaces the placeholder
+   * with an error notice instead of flushing content.
    */
-  private async retireCycle(cycle: ReplyCycle, progressText: string, answerText?: string): Promise<void> {
+  private async retireCycle(cycle: ReplyCycle, fatalText?: string): Promise<void> {
     if (cycle.closed) return;
     cycle.closed = true;
     if (cycle.finalizeTimer !== null) {
@@ -433,31 +425,23 @@ export class BridgeRuntime {
       clearInterval(cycle.typingTimer);
       cycle.typingTimer = null;
     }
-    // Detach from the event stream FIRST — the final edits below can take
-    // seconds (edit throttle / flood backoff), and a new cycle may be created
-    // in that window; events must never reach the retiring cycle again.
+    // Detach from the event stream FIRST — the final flushes below can take
+    // seconds (flood backoff), and a new cycle may be created in that window;
+    // events must never reach the retiring cycle again.
     if (this.cycles.get(cycle.chatKey) === cycle) this.cycles.delete(cycle.chatKey);
     cycle.unsubscribe();
-    cycle.pendingText = progressText;
-    const updater = cycle.updater;
-    if (updater) {
-      updater.update(progressText);
-      try {
-        await updater.finalize();
-      } catch (error) {
-        this.onError(error);
-      }
-    } else {
-      // Placeholder never resolved (send failed) — deliver the final text as
-      // a fresh message instead of dropping the run's reply.
-      await this.safeSendText(cycle.chat, progressText || answerText || "✅ done");
+    const renderer = cycle.renderer;
+    if (renderer === null) {
+      // Placeholder never resolved (send failed) — deliver the text as a fresh
+      // message instead of dropping the run's reply.
+      await this.safeSendText(cycle.chat, fatalText ?? "✅ done");
+      return;
     }
-    if (answerText) {
-      // No-stream mode: the answer goes out as complete message(s), never as
-      // mid-run edits.
-      for (const chunk of splitMessage(answerText, this.adapter.caps.maxTextLength)) {
-        await this.safeSendText(cycle.chat, chunk);
-      }
+    try {
+      if (fatalText !== undefined) await renderer.fail(fatalText);
+      else await renderer.finalize();
+    } catch (error) {
+      this.onError(error);
     }
   }
 
@@ -465,10 +449,6 @@ export class BridgeRuntime {
     if (cycle.finalizeTimer !== null) clearTimeout(cycle.finalizeTimer);
     if (cycle.typingTimer !== null) clearInterval(cycle.typingTimer);
     cycle.unsubscribe();
-  }
-
-  private activeSessionMessages(chatKey: string): UIMessage[] {
-    return (this.activeSessions.get(chatKey)?.getSnapshot().messages ?? []) as UIMessage[];
   }
 
   // ---------------------------------------------------------------------------
@@ -513,11 +493,12 @@ export class BridgeRuntime {
 
       const session = this.activeSessions.get(record.chatKey);
       await cb.ack();
-      // Optimistic feedback FIRST: applyInteraction's dispatch blocks until the
-      // rest of the run finishes (local mode), so awaiting it left the clicked
-      // row looking dead for the entire run. Resolve the row immediately and
-      // submit in the background; failures surface via onError.
-      await this.safeEditText(cb, renderResolved(describePending(record.pending), outcomeFor(record.pending, payload)));
+      // Feedback FIRST: applyInteraction's dispatch blocks until the rest of
+      // the run finishes (local mode). Drop the buttons immediately (the row
+      // stops looking actionable) and submit in the background; the tool line
+      // itself updates via the run events (⏸ → running → ✓/✗ denied);
+      // failures surface via onError.
+      this.cycles.get(record.chatKey)?.renderer?.setButtons(record.pending.segmentKey, undefined);
       void this.applyInteraction(session, record, payload).catch((error) => this.onError(error));
     } catch (error) {
       this.onError(error);
@@ -529,8 +510,8 @@ export class BridgeRuntime {
     session: AgentSession | undefined,
     record: PendingRecord,
     payload: NonNullable<ReturnType<typeof decodeButtonPayload>>
-  ): Promise<string> {
-    if (!session) return "session unavailable";
+  ): Promise<void> {
+    if (!session) return;
     if (record.pending.kind === "approval") {
       const approved = payload.a === "y";
       await this.dispatch(session, {
@@ -539,7 +520,7 @@ export class BridgeRuntime {
         approved,
         ...(approved ? {} : { reason: "denied via IM" }),
       });
-      return outcomeFor(record.pending, payload);
+      return;
     }
     const option = record.pending.options[payload.i ?? -1] ?? "(no answer)";
     await this.dispatch(session, {
@@ -553,7 +534,6 @@ export class BridgeRuntime {
         cachedOutputPath: null,
       },
     });
-    return `▸ ${option}`;
   }
 
   /** TTL expiry → auto-deny (approval) / timeout answer (ask_user). */
@@ -640,14 +620,4 @@ export async function createImBridge(options: BridgeRuntimeOptions): Promise<Bri
     }
   }
   return new BridgeRuntime({ ...options, config, host });
-}
-
-function describePending(pending: PendingInteraction): string {
-  return pending.kind === "approval" ? `Approval · ${pending.question}` : `Question · ${pending.question}`;
-}
-
-/** Outcome label for a button answer — shared by the optimistic row edit and applyInteraction. */
-function outcomeFor(pending: PendingInteraction, payload: NonNullable<ReturnType<typeof decodeButtonPayload>>): string {
-  if (pending.kind === "approval") return payload.a === "y" ? "✅ approved" : "❌ denied";
-  return `▸ ${pending.options[payload.i ?? -1] ?? "(no answer)"}`;
 }
