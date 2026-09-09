@@ -1,15 +1,36 @@
+import { createElement } from "react";
+
+import { UsageHeatmap } from "../components/UsageHeatmap.js";
 import { useConfig } from "../hooks/use-config.js";
 
 import { registerCommand } from "./utils/registry.js";
 
 import type { CommandContext } from "./utils/types.js";
 import type { DailyUsageBucket, ModelUsageTotal } from "@my-agent/core";
+import type { ReactNode } from "react";
 
-const DEFAULT_WEEKS = 12;
+/** Number of months shown by default in the global activity graph. */
+const DEFAULT_MONTHS = 6;
 const MAX_WEEKS = 52;
 
-/** Heat-scale glyphs for the contribution graph: empty → light → heavy. */
-const HEAT_GLYPHS = ["·", "░", "▒", "▓", "█"];
+/**
+ * Number of Monday-aligned weekly columns needed to cover the last `months`
+ * months, ending at the current week (so the grid always contains today).
+ * Aligning to Monday keeps the column day-of-week labels correct at the start.
+ */
+function recentWeeks(months: number): number {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
+  const startMonday = new Date(start);
+  startMonday.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  const thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const weeks = Math.round((thisMonday.getTime() - startMonday.getTime()) / (7 * 86400000)) + 1;
+  return Math.max(1, weeks);
+}
+
+const DEFAULT_WEEKS = recentWeeks(DEFAULT_MONTHS);
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -30,80 +51,25 @@ function pct(part: number, total: number): string {
 }
 
 // ============================================================================
-// Contribution graph
+// Global activity — summary text rendered alongside the <UsageHeatmap/> node
 // ============================================================================
 
-/** Monday-based week start (00:00 local) for the first column. */
-function firstWeekMonday(weeks: number): Date {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dow = (today.getDay() + 6) % 7; // 0 = Monday
-  const thisMonday = new Date(today);
-  thisMonday.setDate(today.getDate() - dow);
-  const start = new Date(thisMonday);
-  start.setDate(thisMonday.getDate() - (weeks - 1) * 7);
-  return start;
-}
-
-function dayKey(d: Date): string {
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${mm}-${dd}`;
-}
-
-/**
- * Render a GitHub-style heatmap: columns = weeks (oldest → newest), rows =
- * Mon / Wed / Fri (sparsely labeled to stay compact in the output panel).
- * Cell depth = that day's total token usage relative to the busiest day.
- */
-function renderContributionGraph(daily: DailyUsageBucket[], weeks: number): string[] {
-  const byDay = new Map(daily.map((d) => [d.date, d.totalTokens]));
-  const maxDay = daily.reduce((m, d) => Math.max(m, d.totalTokens), 0);
-  const start = firstWeekMonday(weeks);
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-
-  const rows: Array<{ label: string; offset: number }> = [
-    { label: "Mon", offset: 0 },
-    { label: "Wed", offset: 2 },
-    { label: "Fri", offset: 4 },
-  ];
-
+function renderGlobalStats(daily: DailyUsageBucket[], models: ModelUsageTotal[], weeks: number): string[] {
   const lines: string[] = [];
-  for (const row of rows) {
-    let line = `  ${row.label} `;
-    for (let w = 0; w < weeks; w++) {
-      const cell = new Date(start);
-      cell.setDate(start.getDate() + w * 7 + row.offset);
-      if (cell.getTime() > today.getTime()) {
-        line += "  ";
-        continue;
-      }
-      const tokens = byDay.get(dayKey(cell)) ?? 0;
-      const level = tokens <= 0 || maxDay <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil((tokens / maxDay) * 4)));
-      line += `${HEAT_GLYPHS[level]} `;
-    }
-    lines.push(line.replace(/\s+$/, ""));
-  }
-  return lines;
-}
-
-function renderGlobalSection(daily: DailyUsageBucket[], models: ModelUsageTotal[], weeks: number): string[] {
-  const lines: string[] = [];
-  lines.push("");
-  lines.push(`  ── Global Activity (${weeks}w) ──`);
 
   if (daily.length === 0) {
+    lines.push("");
+    lines.push(`  ── Global Activity (${weeks}w) ──`);
     lines.push("  (no usage history yet — it builds up as you use the agent)");
     return lines;
   }
-
-  lines.push(...renderContributionGraph(daily, weeks));
 
   const totalTokens = daily.reduce((s, d) => s + d.totalTokens, 0);
   const totalCost = daily.reduce((s, d) => s + d.costUsd, 0);
   const activeDays = daily.filter((d) => d.totalTokens > 0).length;
   const avgPerDay = totalTokens / (weeks * 7);
+  lines.push("");
+  lines.push(`  ── Global Activity (${weeks}w) ──`);
   lines.push(
     `  ${fmt(totalTokens)} tokens · ${formatCost(totalCost)} · ${activeDays} active days · avg ${fmt(avgPerDay)}/day`
   );
@@ -112,20 +78,26 @@ function renderGlobalSection(daily: DailyUsageBucket[], models: ModelUsageTotal[
     lines.push("");
     lines.push(`  ── By Model ──`);
     for (const m of models) {
-      lines.push(`  ${m.model.padEnd(24)}${fmt(m.totalTokens).padStart(8)} tokens  ${formatCost(m.costUsd)}`);
+      lines.push(`  ${m.model.padEnd(40)}${fmt(m.totalTokens).padStart(10)} tokens  ${formatCost(m.costUsd)}`);
     }
   }
   return lines;
 }
 
-async function fetchGlobalHistory(ctx: CommandContext, weeks: number): Promise<string[] | null> {
+async function fetchGlobalHistory(
+  ctx: CommandContext,
+  weeks: number
+): Promise<{
+  daily: DailyUsageBucket[];
+  models: ModelUsageTotal[];
+} | null> {
   const session = ctx.getSession();
   if (!session) return null;
   const result = await session.dispatch({ type: "usage.history", weeks });
   if (!result.ok) return null;
-  const data = result.data as { daily: DailyUsageBucket[]; models: ModelUsageTotal[] } | undefined;
+  const data = result.data as { daily?: DailyUsageBucket[]; models?: ModelUsageTotal[] } | undefined;
   if (!data) return null;
-  return renderGlobalSection(data.daily ?? [], data.models ?? [], weeks);
+  return { daily: data.daily ?? [], models: data.models ?? [] };
 }
 
 // ============================================================================
@@ -219,13 +191,17 @@ registerCommand({
 
     // Global contribution graph — best effort; a failed/dispatch-unsupported
     // session (e.g. store unavailable) just omits the section.
+    let graphNode: ReactNode | undefined;
     try {
-      const globalLines = await fetchGlobalHistory(ctx, weeks);
-      if (globalLines) lines.push(...globalLines);
+      const global = await fetchGlobalHistory(ctx, weeks);
+      if (global) {
+        graphNode = createElement(UsageHeatmap, { daily: global.daily, weeks });
+        lines.push(...renderGlobalStats(global.daily, global.models, weeks));
+      }
     } catch {
       // ignore — session section is already complete
     }
 
-    return { ok: true, message: lines.join("\n") };
+    return { ok: true, message: lines.join("\n"), node: graphNode };
   },
 });

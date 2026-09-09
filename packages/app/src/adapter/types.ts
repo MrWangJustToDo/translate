@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionHost, AgentToolConfig, ModelInfo, ModelStyle } from "@my-agent/core";
 import type { UIMessage } from "@tanstack/ai";
+import type { ReactNode } from "react";
 
 // ============================================================================
 // App Configuration
@@ -60,7 +61,7 @@ export interface AppConfig {
 // Command Result
 // ============================================================================
 
-export type CommandResult = { ok: true; message?: string } | { ok: false; error: string };
+export type CommandResult = { ok: true; message?: string; node?: ReactNode } | { ok: false; error: string };
 
 // ============================================================================
 // Initialization Result

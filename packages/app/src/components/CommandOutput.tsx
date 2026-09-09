@@ -22,6 +22,7 @@ const renderLine = (line: string) => (
 export const CommandOutput = () => {
   const lines = useCommandOutput((s) => s.lines);
   const title = useCommandOutput((s) => s.title);
+  const node = useCommandOutput((s) => s.node ?? null);
   const scrollOffset = useCommandOutput((s) => s.scrollOffset);
 
   if (!lines) return null;
@@ -39,6 +40,11 @@ export const CommandOutput = () => {
         scrollOffset={scrollOffset}
         renderItem={renderLine}
       />
+      {node && (
+        <Box marginTop={1} marginBottom={1}>
+          {node}
+        </Box>
+      )}
     </Box>
   );
 };

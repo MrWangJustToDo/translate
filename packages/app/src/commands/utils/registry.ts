@@ -51,7 +51,7 @@ function handleResult(result: CommandResult, ctx: CommandContext, commandName: s
   if (!result.message) return;
 
   if (result.message.includes("\n")) {
-    useCommandOutput.getActions().show(`/${commandName}`, result.message);
+    useCommandOutput.getActions().show(`/${commandName}`, result.message, result.node);
   } else {
     ctx.inputActions.setInputFeedback(result.message, "success");
   }
