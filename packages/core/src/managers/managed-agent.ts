@@ -343,12 +343,7 @@ export class ManagedAgent {
   // Run lifecycle flags + timing
   // ============================================================================
 
-  /** When true, next {@link prepareForRun} skips memory prefetch / prompt:submit (steer / tool continue). */
-  private prepareAsContinuation: boolean;
-  /** Guards turn-level finalizeRun so stop() + pump outcome do not double-fire. */
-  private turnLifecycleFinalized: boolean;
-  private streamStartedAt: number;
-  private lastStreamDurationMs: number;
+  // Run lifecycle flags/timing moved to RunCoordinator (this.run) — methods below delegate.
 
   // ============================================================================
   // Prompt / turn context
@@ -475,12 +470,8 @@ export class ManagedAgent {
     this.sessionSyncTracker = createSessionSyncTracker();
 
     // ============================================================================
-    // Run lifecycle flags + timing (inline inits)
+    // (Run lifecycle flags + timing inits moved into RunCoordinator)
     // ============================================================================
-    this.prepareAsContinuation = false;
-    this.turnLifecycleFinalized = false;
-    this.streamStartedAt = 0;
-    this.lastStreamDurationMs = 0;
 
     // ============================================================================
     // Prompt / turn context (inline inits)
@@ -524,15 +515,15 @@ export class ManagedAgent {
   }
 
   getStreamStartedAt(): number {
-    return this.streamStartedAt;
+    return this.run.getStreamStartedAt();
   }
 
   setStreamStartedAt(value: number): void {
-    this.streamStartedAt = value;
+    this.run.setStreamStartedAt(value);
   }
 
   getLastStreamDurationMs(): number {
-    return this.lastStreamDurationMs;
+    return this.run.getLastStreamDurationMs();
   }
 
   setStatus(status: AgentStatus, trigger?: string): void {
@@ -554,21 +545,18 @@ export class ManagedAgent {
     this.emitStateChange();
   }
 
-  private currentRunId: string | null = null;
-
   /** Track the active run id for log run-scoping (see RunLifecycleHost). */
   setCurrentRunId(runId: string | null): void {
-    this.currentRunId = runId;
+    this.run.setCurrentRunId(runId);
   }
 
   getCurrentRunId(): string | null {
-    return this.currentRunId;
+    return this.run.getCurrentRunId();
   }
 
-  /** Snapshot wall-clock duration for the current turn into {@link lastStreamDurationMs}. */
+  /** Snapshot wall-clock duration for the current turn into lastStreamDurationMs. */
   recordStreamDuration(): void {
-    if (this.streamStartedAt <= 0) return;
-    this.lastStreamDurationMs = Math.max(0, Date.now() - this.streamStartedAt);
+    this.run.recordStreamDuration();
   }
 
   setError(error: string): void {
@@ -866,7 +854,7 @@ export class ManagedAgent {
 
   /** Call at the start of a chat pump or detached run so finalize can run once for that turn. */
   resetTurnLifecycle(): void {
-    this.turnLifecycleFinalized = false;
+    this.run.resetTurnLifecycle();
   }
 
   /**
@@ -874,9 +862,7 @@ export class ManagedAgent {
    * @internal Used by {@link finalizeManagedAgentRun}.
    */
   beginTurnFinalize(): boolean {
-    if (this.turnLifecycleFinalized) return false;
-    this.turnLifecycleFinalized = true;
-    return true;
+    return this.run.beginTurnFinalize();
   }
 
   setAgentDocContent(content: string, source?: string): void {
@@ -1212,19 +1198,17 @@ export class ManagedAgent {
 
   /** Mark the next prepareForRun as a mid-turn continuation (queued steer / tool phase). */
   markNextPrepareAsContinuation(): void {
-    this.prepareAsContinuation = true;
+    this.run.markNextPrepareAsContinuation();
   }
 
   /** Clear a leftover continuation mark (e.g. on turn finalize). */
   clearPrepareAsContinuation(): void {
-    this.prepareAsContinuation = false;
+    this.run.clearPrepareAsContinuation();
   }
 
   /** Consume and clear the continuation flag for prepareForRun. */
   consumePrepareAsContinuation(): boolean {
-    const value = this.prepareAsContinuation;
-    this.prepareAsContinuation = false;
-    return value;
+    return this.run.consumePrepareAsContinuation();
   }
 
   async prepareForRun(options: {
@@ -1404,7 +1388,7 @@ export class ManagedAgent {
     this.pendingExtensionTurnContextSections = undefined;
     this.usage.reset();
     this.todoManager?.reset();
-    this.turnLifecycleFinalized = false;
+    this.run.resetTurnLifecycle();
     // Keep chatController + uiChannel alive — /clear calls clearMessages() separately.
     // Resetting these would break subsequent sendMessage() calls.
     this.lastAdmittedTurnContextHashes = undefined;
