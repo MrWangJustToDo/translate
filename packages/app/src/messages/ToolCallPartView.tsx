@@ -106,6 +106,7 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
       : formatToolInput(toolInput, toolName, { compact: displayMode === "compact" }) || null;
 
   const hasOutput = uiState === "output-available" || uiState === "output-error" || uiState === "output-denied";
+  const hasDenied = uiState === "output-denied";
   const durationMs = hasOutput ? getDurationMs(part.output) : null;
   const showDuration = durationMs !== null && durationMs >= DURATION_THRESHOLD_MS;
 
@@ -180,14 +181,14 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
 
       {hasOutput && <ToolOutputView part={part} uiState={uiState} />}
 
-      {/* {errorText && (
+      {hasDenied && errorText && (
         <Box paddingLeft={2}>
           <Text color={COLORS.danger} wrap="truncate-end">
             {errorText}
           </Text>
         </Box>
       )}
-      {compactOutput && !errorText && (
+      {/* {compactOutput && !errorText && (
         <Box paddingLeft={2}>
           <Text
             color={(part.output as { success?: boolean } | undefined)?.success === false ? COLORS.danger : COLORS.muted}
