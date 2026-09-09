@@ -184,10 +184,10 @@ export async function buildManagedAgent({
       // failures) into the agent's structured log.
       log,
     });
-    managed.extensionRunner = extensionRunner;
+    managed.extensions.setExtensionRunner(extensionRunner);
 
     const extensionLoader = new ExtensionLoader();
-    managed.extensionLoader = extensionLoader;
+    managed.extensions.setExtensionLoader(extensionLoader);
 
     const extensionDirs = await getDefaultExtensionDirs(config.extensionDirs);
     log.debug("system", "Extension search directories", { dirs: extensionDirs });

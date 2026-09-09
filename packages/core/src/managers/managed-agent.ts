@@ -25,7 +25,6 @@ import {
   buildPlanRetroSteerMessage,
 } from "../agent/plan/plan-prompts.js";
 import { SummaryStreamHub } from "../agent/summary-stream/summary-stream-hub.js";
-import { defineServerTool } from "../agent/tools/runtime/define-tool.js";
 import { getCurrentDate, getGitInfo } from "../agent/turn-context/env-context.js";
 import {
   formatInstructionContextSection,
@@ -65,6 +64,7 @@ import {
   saveSessionUIMessages as saveSessionUIMessagesHelper,
 } from "./managed-agent-session.js";
 import { RunCoordinator } from "./run-coordinator.js";
+import { ExtensionRegistryService } from "./services/extension-registry-service.js";
 import { MemoryService } from "./services/memory-service.js";
 import { SessionService } from "./services/session-service.js";
 import { UsageHistoryService } from "./services/usage-history-service.js";
@@ -275,15 +275,31 @@ export class ManagedAgent {
   // ============================================================================
 
   tools: ToolsRecord;
-  private managedToolsProvider?: () => ToolsRecord;
   log: AgentLog;
-  todoManager: TodoManager | null;
-  mcpManager: McpManager | null;
-  skillRegister: SkillRegistry | null;
-  extensionRunner: ExtensionRunner | null;
-  extensionLoader: ExtensionLoader | null;
-  /** Extension slash commands registered via {@link ExtensionContext.registerCommand}. */
-  private extensionCommands: Map<string, ExtensionCommand>;
+  /** Extension / tool / integration registration domain (todo, MCP, skills, extensions). */
+  readonly extensions: ExtensionRegistryService;
+
+  // Set-once managers + extension runtime — owned by {@link extensions}, exposed
+  // as getters so external readers keep the field-like syntax.
+  get todoManager(): TodoManager | null {
+    return this.extensions.getTodoManager();
+  }
+
+  get mcpManager(): McpManager | null {
+    return this.extensions.getMcpManager();
+  }
+
+  get skillRegister(): SkillRegistry | null {
+    return this.extensions.getSkillRegistry();
+  }
+
+  get extensionRunner(): ExtensionRunner | null {
+    return this.extensions.getExtensionRunner();
+  }
+
+  get extensionLoader(): ExtensionLoader | null {
+    return this.extensions.getExtensionLoader();
+  }
 
   // ============================================================================
   // Agent tree + timestamps
@@ -366,6 +382,7 @@ export class ManagedAgent {
       memory?: MemoryService;
       session?: SessionService;
       usageHistory?: UsageHistoryService;
+      extensions?: ExtensionRegistryService;
     }
   ) {
     this.id = init.id ?? config.id ?? generateId("agent");
@@ -375,7 +392,8 @@ export class ManagedAgent {
     this.config = { ...config, ...AgentConfigSchema.parse(config) };
     this.log = init.log;
     this.tools = init.tools;
-    this.todoManager = init.todoManager;
+    this.extensions = init.extensions ?? new ExtensionRegistryService();
+    if (init.todoManager) this.extensions.setTodoManager(init.todoManager);
     this.parentId = init.parentId;
     this.usage = init.usage ?? new UsageTracker();
     this.memory = init.memory ?? new MemoryService();
@@ -385,7 +403,7 @@ export class ManagedAgent {
     this.childIds = [];
     this.createdAt = Date.now();
     this.updatedAt = Date.now();
-    this.managedToolsProvider = () => this.tools;
+    this.extensions.setManagedToolsProvider(() => this.tools);
     this.statusController = createAgentStatusController({
       getStatus: () => this.status,
       setStatus: (status, trigger) => this.setStatus(status, trigger),
@@ -438,14 +456,9 @@ export class ManagedAgent {
       ui: AgentUIChannel | undefined;
     }>();
 
-    // ============================================================================
-    // Tools / registries / extensions (inline inits)
-    // ============================================================================
-    this.mcpManager = null;
-    this.skillRegister = null;
-    this.extensionRunner = null;
-    this.extensionLoader = null;
-    this.extensionCommands = new Map<string, ExtensionCommand>();
+    // ====================================================================================
+    // (Tools / registries / extensions init moved into ExtensionRegistryService)
+    // ====================================================================================
 
     // ============================================================================
     // Run / UI / model wiring (inline inits)
@@ -783,12 +796,11 @@ export class ManagedAgent {
   }
 
   setTodoManager(t: TodoManager): void {
-    if (this.todoManager) return;
-    this.todoManager = t;
+    this.extensions.setTodoManager(t);
   }
 
   getTodoManager(): TodoManager | null {
-    return this.todoManager;
+    return this.extensions.getTodoManager();
   }
 
   setMemoryManager(manager: MemoryManager): void {
@@ -876,70 +888,49 @@ export class ManagedAgent {
   }
 
   setSkillRegistry(t: SkillRegistry): void {
-    if (this.skillRegister) return;
-    this.skillRegister = t;
+    this.extensions.setSkillRegistry(t);
   }
 
   getSkillRegistry(): SkillRegistry | null {
-    return this.skillRegister;
+    return this.extensions.getSkillRegistry();
   }
 
   setMcpManager(m: McpManager): void {
-    if (this.mcpManager) return;
-    this.mcpManager = m;
+    this.extensions.setMcpManager(m);
   }
 
   getMcpManager(): McpManager | null {
-    return this.mcpManager;
+    return this.extensions.getMcpManager();
   }
 
   registerTool(def: ExtensionToolDefinition): void {
-    if (this.tools[def.name]) {
-      this.log?.warn("system", `Tool "${def.name}" already registered, overwriting`);
-    }
-    const serverTool = defineServerTool({
-      name: def.name,
-      description: def.description,
-      inputSchema: def.inputSchema,
-      outputSchema: def.outputSchema,
-      lazy: def.lazy,
-      execute: async (args, ctx) =>
-        def.execute(args, {
-          toolCallId: ctx.toolCallId,
-          abortSignal: ctx.abortSignal,
-        }),
-      toUI: def.toUI,
-      toModelOutput: def.toModelOutput,
+    this.extensions.registerTool(def, {
+      tools: this.tools,
+      warn: (message) => this.log?.warn("system", message),
+      onToolsChanged: () => this.setRunnerConfigKey(undefined),
     });
-    (this.tools as Record<string, unknown>)[def.name] = serverTool;
-    this.setRunnerConfigKey(undefined);
   }
 
   registerCommand(cmd: ExtensionCommand): void {
-    if (this.extensionCommands.has(cmd.name)) {
-      this.log?.warn("system", `Command "/${cmd.name}" already registered, overwriting`);
-    }
-    this.extensionCommands.set(cmd.name, cmd);
+    this.extensions.registerCommand(cmd, (message) => this.log?.warn("system", message));
   }
 
   /** Unregister a tool previously added by an extension (used when disabling). */
   unregisterExtensionTool(name: string): void {
-    if (name in this.tools) {
-      delete (this.tools as Record<string, unknown>)[name];
-      this.setRunnerConfigKey(undefined);
-    }
+    this.extensions.unregisterExtensionTool(name, {
+      tools: this.tools,
+      warn: (message) => this.log?.warn("system", message),
+      onToolsChanged: () => this.setRunnerConfigKey(undefined),
+    });
   }
 
   /** Unregister a command previously added by an extension (used when disabling). */
   unregisterExtensionCommand(name: string): void {
-    this.extensionCommands.delete(name);
+    this.extensions.unregisterExtensionCommand(name);
   }
 
   getExtensionCommands(): ExtensionCommand[] {
-    if (this.extensionRunner) {
-      return this.extensionRunner.getCommands();
-    }
-    return Array.from(this.extensionCommands.values());
+    return this.extensions.getExtensionCommands();
   }
 
   setCompactionConfig(config: CompactionConfig): void {
@@ -1372,7 +1363,7 @@ export class ManagedAgent {
   }
 
   isToolNeedsApproval(toolName: string): boolean {
-    const tools = this.managedToolsProvider?.() ?? {};
+    const tools = this.extensions.getManagedToolsProvider()?.() ?? {};
     const tool = tools[toolName];
     return tool != null && "needsApproval" in tool && (tool as { needsApproval?: boolean }).needsApproval === true;
   }
