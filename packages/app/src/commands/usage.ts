@@ -2,6 +2,15 @@ import { useConfig } from "../hooks/use-config.js";
 
 import { registerCommand } from "./utils/registry.js";
 
+import type { CommandContext } from "./utils/types.js";
+import type { DailyUsageBucket, ModelUsageTotal } from "@my-agent/core";
+
+const DEFAULT_WEEKS = 12;
+const MAX_WEEKS = 52;
+
+/** Heat-scale glyphs for the contribution graph: empty → light → heavy. */
+const HEAT_GLYPHS = ["·", "░", "▒", "▓", "█"];
+
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -20,16 +29,122 @@ function pct(part: number, total: number): string {
   return ` (${((part / total) * 100).toFixed(1)}%)`;
 }
 
+// ============================================================================
+// Contribution graph
+// ============================================================================
+
+/** Monday-based week start (00:00 local) for the first column. */
+function firstWeekMonday(weeks: number): Date {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dow = (today.getDay() + 6) % 7; // 0 = Monday
+  const thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() - dow);
+  const start = new Date(thisMonday);
+  start.setDate(thisMonday.getDate() - (weeks - 1) * 7);
+  return start;
+}
+
+function dayKey(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/**
+ * Render a GitHub-style heatmap: columns = weeks (oldest → newest), rows =
+ * Mon / Wed / Fri (sparsely labeled to stay compact in the output panel).
+ * Cell depth = that day's total token usage relative to the busiest day.
+ */
+function renderContributionGraph(daily: DailyUsageBucket[], weeks: number): string[] {
+  const byDay = new Map(daily.map((d) => [d.date, d.totalTokens]));
+  const maxDay = daily.reduce((m, d) => Math.max(m, d.totalTokens), 0);
+  const start = firstWeekMonday(weeks);
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+
+  const rows: Array<{ label: string; offset: number }> = [
+    { label: "Mon", offset: 0 },
+    { label: "Wed", offset: 2 },
+    { label: "Fri", offset: 4 },
+  ];
+
+  const lines: string[] = [];
+  for (const row of rows) {
+    let line = `  ${row.label} `;
+    for (let w = 0; w < weeks; w++) {
+      const cell = new Date(start);
+      cell.setDate(start.getDate() + w * 7 + row.offset);
+      if (cell.getTime() > today.getTime()) {
+        line += "  ";
+        continue;
+      }
+      const tokens = byDay.get(dayKey(cell)) ?? 0;
+      const level = tokens <= 0 || maxDay <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil((tokens / maxDay) * 4)));
+      line += `${HEAT_GLYPHS[level]} `;
+    }
+    lines.push(line.replace(/\s+$/, ""));
+  }
+  return lines;
+}
+
+function renderGlobalSection(daily: DailyUsageBucket[], models: ModelUsageTotal[], weeks: number): string[] {
+  const lines: string[] = [];
+  lines.push("");
+  lines.push(`  ── Global Activity (${weeks}w) ──`);
+
+  if (daily.length === 0) {
+    lines.push("  (no usage history yet — it builds up as you use the agent)");
+    return lines;
+  }
+
+  lines.push(...renderContributionGraph(daily, weeks));
+
+  const totalTokens = daily.reduce((s, d) => s + d.totalTokens, 0);
+  const totalCost = daily.reduce((s, d) => s + d.costUsd, 0);
+  const activeDays = daily.filter((d) => d.totalTokens > 0).length;
+  const avgPerDay = totalTokens / (weeks * 7);
+  lines.push(
+    `  ${fmt(totalTokens)} tokens · ${formatCost(totalCost)} · ${activeDays} active days · avg ${fmt(avgPerDay)}/day`
+  );
+
+  if (models.length > 1) {
+    lines.push("");
+    lines.push(`  ── By Model ──`);
+    for (const m of models) {
+      lines.push(`  ${m.model.padEnd(24)}${fmt(m.totalTokens).padStart(8)} tokens  ${formatCost(m.costUsd)}`);
+    }
+  }
+  return lines;
+}
+
+async function fetchGlobalHistory(ctx: CommandContext, weeks: number): Promise<string[] | null> {
+  const session = ctx.getSession();
+  if (!session) return null;
+  const result = await session.dispatch({ type: "usage.history", weeks });
+  if (!result.ok) return null;
+  const data = result.data as { daily: DailyUsageBucket[]; models: ModelUsageTotal[] } | undefined;
+  if (!data) return null;
+  return renderGlobalSection(data.daily ?? [], data.models ?? [], weeks);
+}
+
+// ============================================================================
+// Command
+// ============================================================================
+
 registerCommand({
   name: "usage",
-  description: "Show session token usage and cost",
-  usage: "/usage",
+  description: "Show session token usage, cost, and a global activity graph",
+  usage: "/usage [Nw]",
   immediate: true,
-  execute: (_args, ctx) => {
+  execute: async (args, ctx) => {
     const session = ctx.getSession();
     if (!session) {
       return { ok: false, error: "Agent not initialized" };
     }
+
+    const weeksMatch = /^(\d+)\s*w(week)?$/i.exec(args.trim());
+    const weeks = weeksMatch ? Math.min(MAX_WEEKS, Math.max(1, parseInt(weeksMatch[1], 10))) : DEFAULT_WEEKS;
 
     const snap = session.getSnapshot();
     const usage = snap.usage;
@@ -101,6 +216,15 @@ registerCommand({
     }
 
     lines.push(`  Session cost: ${formatCost(cost)}`);
+
+    // Global contribution graph — best effort; a failed/dispatch-unsupported
+    // session (e.g. store unavailable) just omits the section.
+    try {
+      const globalLines = await fetchGlobalHistory(ctx, weeks);
+      if (globalLines) lines.push(...globalLines);
+    } catch {
+      // ignore — session section is already complete
+    }
 
     return { ok: true, message: lines.join("\n") };
   },

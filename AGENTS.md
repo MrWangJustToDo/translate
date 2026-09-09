@@ -776,6 +776,7 @@ Runtime data under the project root is grouped under a single gitignored `.agent
 | Path | Purpose |
 |------|---------|
 | `.agents/sessions/` | Session JSON (`*.session.json`) |
+| `.agents/usage/` | Global usage history (`usage-<year>.jsonl`, per-LLM-call records) |
 | `.agents/memory/` | Cross-session memory markdown + `MEMORY.md` |
 | `.agents/cache/tool-output/` | Large tool-output spill files |
 | `.agents/cache/models-dev.json` | models.dev metadata disk cache |

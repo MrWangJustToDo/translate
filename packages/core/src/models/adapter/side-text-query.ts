@@ -1,6 +1,7 @@
 import { chat } from "@tanstack/ai";
 
-import { extractTanStackUsage, type TokenUsage } from "../../runtime-types/token-usage.js";
+import { recordUsage } from "../../agent/usage/usage-history.js";
+import { calculateCost, extractTanStackUsage, type TokenUsage } from "../../runtime-types/token-usage.js";
 
 import type { TextAdapterConfig } from "./adapter-factory.js";
 
@@ -79,6 +80,17 @@ export async function runSideTextQuery(
     }
     if (chunk.type === "RUN_FINISHED" && chunk.usage) {
       usage = extractTanStackUsage(chunk.usage);
+      // Global usage-history record: side queries (titles, summaries, memory
+      // selection) are real LLM calls and must show up in the contribution
+      // graph. Cost uses the adapter's own model pricing (0 when unknown).
+      if (usage) {
+        recordUsage({
+          agentId: "side-query",
+          model: textAdapter.model,
+          usage,
+          costUsd: textAdapter.pricing ? calculateCost(usage, textAdapter.pricing) : 0,
+        });
+      }
     }
     if (chunk.type === "RUN_ERROR") {
       const message =

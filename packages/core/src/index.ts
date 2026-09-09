@@ -83,6 +83,7 @@ export type { TokenUsage } from "./agent/compaction";
 export type { LogEntry, LogCategory, LogLevel } from "./agent/agent-log";
 export type { TodoItem, TodoStatus, TodoPriority } from "./agent/todo";
 export type { SessionMeta, SessionData, ResumeResult, ToolApprovalRecord } from "./agent/persistence";
+export type { UsageRecord, DailyUsageBucket, ModelUsageTotal, UsageHistoryResult } from "./agent/usage/usage-history";
 
 // ============================================================================
 // Agent Session API (host-facing transport-agnostic surface)

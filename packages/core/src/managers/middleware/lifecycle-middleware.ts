@@ -11,6 +11,7 @@ import { extractTanStackUsage } from "../../runtime-types/token-usage.js";
 import type { ToolRunContext } from "../../agent/runner/run-context.js";
 import type { ModelPricing } from "../../models/types.js";
 import type { UsageTracker } from "../../runtime-types";
+import type { TokenUsage } from "../../runtime-types/token-usage.js";
 import type { EmitAgentTelemetryFn } from "../telemetry/emit-agent-telemetry.js";
 import type { ChatMiddleware } from "@tanstack/ai";
 
@@ -24,6 +25,8 @@ export interface LifecycleMiddlewareDeps {
   onThinking?: () => void;
   onFirstModelOutput?: () => void;
   emitEvent?: EmitAgentTelemetryFn;
+  /** Global usage-history hook: record each model iteration's tokens + cost. */
+  recordUsage?: (input: { model?: string; usage: TokenUsage; costUsd: number }) => void;
 }
 
 export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMiddleware<ToolRunContext> {
@@ -84,7 +87,7 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
 
       return chunk;
     },
-    onUsage: (_ctx, usage) => {
+    onUsage: (ctx, usage) => {
       const parsed = extractTanStackUsage(usage);
       deps.usage.updateWindowUsage(parsed, deps.getPricing());
       // onUsage fires once per model iteration (each RUN_FINISHED). Record this
@@ -96,6 +99,7 @@ export function createLifecycleMiddleware(deps: LifecycleMiddlewareDeps): ChatMi
       lastRoundElapsedMs = roundElapsed;
       lastReasoningTokens = deps.usage.getLastCallReasoningTokens();
       lastCostUsd = deps.usage.getLastCallCostUsd();
+      deps.recordUsage?.({ model: ctx.model ?? lastModel, usage: parsed, costUsd: lastCostUsd });
     },
     onFinish: (_ctx, info) => {
       // Rounds are already recorded per-iteration in onUsage; nothing to add

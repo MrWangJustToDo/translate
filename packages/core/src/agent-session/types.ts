@@ -171,7 +171,9 @@ export type AgentSessionCommand =
    * transcript/plan/auto/todos, create a new SessionData. Prefer Host.create for a
    * brand-new agent process.
    */
-  | { type: "session.new" };
+  | { type: "session.new" }
+  /** Query the global usage history store for the contribution graph (`/usage`). */
+  | { type: "usage.history"; weeks?: number };
 
 export type AgentSessionCommandResult =
   | { ok: true; data?: unknown }

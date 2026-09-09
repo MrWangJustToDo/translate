@@ -325,7 +325,9 @@ async function executeSubagentRun(config: SubagentConfig, manager: AgentManager)
     const durationMs = Math.max(0, Date.now() - runStartedAt);
 
     if (aggregateUsageToParent && parentManaged) {
-      parentManaged.usage.addTotal(usage);
+      // Carry the subagent's own per-call cost (computed at its own model's
+      // pricing) instead of re-pricing its tokens at the parent's rate.
+      parentManaged.usage.addTotalWithCost(usage, subagentManaged.usage.getTotalCostUsd());
     }
 
     subagent.emitEvent(

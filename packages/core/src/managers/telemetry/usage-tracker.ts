@@ -98,6 +98,20 @@ export class UsageTracker {
   }
 
   /**
+   * Add usage plus a precomputed cost to lifetime totals without re-pricing.
+   * Used when aggregating a subagent's totals into its parent: the subagent
+   * already computed each call's cost with its own model's pricing, so the
+   * parent must carry the cost over instead of re-computing it at the parent's
+   * (possibly different) rate.
+   */
+  addTotalWithCost(usage: TokenUsage, costUsd: number): void {
+    this.accumulateTotal(usage, null);
+    this.totalCostUsd += Number.isFinite(costUsd) && costUsd > 0 ? costUsd : 0;
+    this.lastCallCostUsd = 0;
+    this.emitChange();
+  }
+
+  /**
    * Record one measured main-loop LLM call: its wall-clock duration and generated output tokens.
    *
    * Together these yield a generation-rate basis (tok/s) that only counts calls whose

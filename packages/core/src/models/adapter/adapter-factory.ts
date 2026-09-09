@@ -4,7 +4,7 @@ import { createChatCompletions } from "./chat-completions-text-adapter.js";
 import { createReasoningChatCompletions } from "./reasoning-chat-completions-adapter.js";
 import { shouldEchoReasoningContent } from "./reasoning-echo.js";
 
-import type { ModelInfo, ModelStyle } from "../types.js";
+import type { ModelInfo, ModelPricing, ModelStyle } from "../types.js";
 import type { AnyTextAdapter } from "@tanstack/ai";
 
 // ============================================================================
@@ -19,6 +19,8 @@ export interface TextAdapterConfig {
   modelStyle: ModelStyle;
   /** Whether the model advertises the `reasoning` capability. */
   reasoning?: boolean;
+  /** Pricing from the resolved ModelInfo (models.dev) — lets side queries cost + record their own usage. */
+  pricing?: ModelPricing;
 }
 
 export interface ModelAdapterConfig {
@@ -66,6 +68,7 @@ export function createTextAdapter(config: ModelAdapterConfig): TextAdapterConfig
       model,
       modelStyle: "anthropic",
       reasoning: true,
+      pricing: config.modelInfo?.pricing,
     };
   }
 
@@ -80,6 +83,7 @@ export function createTextAdapter(config: ModelAdapterConfig): TextAdapterConfig
       model,
       modelStyle: "openai",
       reasoning: true,
+      pricing: config.modelInfo?.pricing,
     };
   }
 
@@ -91,5 +95,6 @@ export function createTextAdapter(config: ModelAdapterConfig): TextAdapterConfig
     model,
     modelStyle: "openai",
     reasoning: shouldEchoReasoningContent(config.modelInfo),
+    pricing: config.modelInfo?.pricing,
   };
 }

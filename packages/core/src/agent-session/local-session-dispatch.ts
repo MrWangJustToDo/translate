@@ -216,6 +216,12 @@ export async function dispatchLocalAgentSessionCommand(
           ? { ok: true, data: { sessionId: result.sessionId } }
           : { ok: false, code: "failed", error: result.error };
       }
+      case "usage.history": {
+        const { getUsageHistory } = await import("../agent/usage/usage-history.js");
+        const weeks = Math.min(52, Math.max(1, Math.floor(command.weeks ?? 12)));
+        const history = await getUsageHistory(weeks);
+        return { ok: true, data: { weeks, ...history } };
+      }
       case "effort.set": {
         managed.setReasoningEffort(command.effort);
         return { ok: true, data: { effort: managed.getReasoningEffort() } };
