@@ -177,6 +177,7 @@ export function useFileTree(rootPath: string): {
   loading: boolean;
   toggleDir: (path: string) => Promise<void>;
   reload: () => void;
+  revealPath: (path: string) => Promise<void>;
 } {
   const [dirData, setDirData] = useState<Map<string, FileEntry[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -222,6 +223,34 @@ export function useFileTree(rootPath: string): {
     setReloadToken((token) => token + 1);
   }, []);
 
+  /**
+   * Expand the ancestor directory chain of `path` (loading each dir) so the
+   * target file becomes part of the flat tree. Used to auto-reveal a file that
+   * was selected in diff mode after switching to the full-tree view, and to
+   * jump `[`/`]` to a changed file whose directory is currently collapsed.
+   */
+  const revealPath = useCallback(
+    async (path: string) => {
+      if (!rootPath) return;
+      const rel = workspaceRelativePath(rootPath, path);
+      if (!rel || rel === ".") return;
+      const parts = rel.split("/");
+      const dirs: string[] = [rootPath];
+      let cur = rootPath;
+      for (let i = 0; i < parts.length - 1; i++) {
+        cur = joinWorkspacePath(cur, parts[i]!);
+        dirs.push(cur);
+      }
+      await Promise.all(dirs.map((dir) => loadDir(dir)));
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const dir of dirs) next.add(dir);
+        return next;
+      });
+    },
+    [rootPath, loadDir]
+  );
+
   useEffect(() => {
     if (!rootPath) return;
     let cancelled = false;
@@ -261,7 +290,7 @@ export function useFileTree(rootPath: string): {
     return result;
   }, [dirData, expanded, rootPath]);
 
-  return { items, loading, toggleDir, reload };
+  return { items, loading, toggleDir, reload, revealPath };
 }
 
 // ============================================================================

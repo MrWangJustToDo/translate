@@ -13,6 +13,7 @@ import {
 import { clearWorkspaceFileListCache } from "../utils/workspace-file-search.js";
 import { clearWorkspaceDiffCache } from "../utils/workspace-git-diff.js";
 import { fetchWorkspaceGitInfo, type WorkspaceGitInfo } from "../utils/workspace-git-info.js";
+import { joinWorkspacePath } from "../utils/workspace-path.js";
 import { ensureIndexVisible } from "../utils/workspace-scroll.js";
 
 import { clearContentCache, FileContent } from "./FileContent.js";
@@ -23,7 +24,6 @@ import {
   computeDirStatuses,
   fetchGitStatus,
   FileTree,
-  lookupGitStatus,
   useDiffFileTree,
   useFileTree,
 } from "./FileTree.js";
@@ -126,7 +126,7 @@ export const WorkspaceFileMode = () => {
 
   const isDiffMode = mode === "diff";
 
-  const { items: fullItems, loading: treeLoading, toggleDir, reload } = useFileTree(rootPath);
+  const { items: fullItems, loading: treeLoading, toggleDir, reload, revealPath } = useFileTree(rootPath);
   const { items: diffItems, toggleDir: toggleDiffDir } = useDiffFileTree(gitStatus, rootPath);
 
   // Diff mode lists only changed files (preprocessed, merged-prefix tree);
@@ -147,31 +147,23 @@ export const WorkspaceFileMode = () => {
   );
 
   // Jump between files that have git changes (`[` / `]`), wrapping around.
+  // Uses the git-status changed-file set directly (sorted), so it works on both
+  // the full-tree view and the diff view — even when a changed file's directory
+  // is collapsed in the full tree (the target is revealed + scrolled by the
+  // selectedPath effect below).
   const jumpToChanged = useCallback(
     (direction: 1 | -1) => {
-      const changedIndices: number[] = [];
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item && item.type === "file" && lookupGitStatus(gitStatus, rootPath, item.path)) {
-          changedIndices.push(i);
-        }
-      }
-      if (changedIndices.length === 0) return;
-      let nextIndex: number;
-      if (direction > 0) {
-        const hit = changedIndices.find((i) => i > cursorIndex);
-        nextIndex = hit ?? changedIndices[0]!;
-      } else {
-        const prev = [...changedIndices].reverse().find((i) => i < cursorIndex);
-        nextIndex = prev ?? changedIndices[changedIndices.length - 1]!;
-      }
-      setCursorIndex(nextIndex);
-      const currentScroll = useWorkspaceView.getReadonlyState().treeScrollTop;
-      setTreeScrollTop(ensureIndexVisible(nextIndex, currentScroll, paneBodyLines, items.length));
-      const target = items[nextIndex];
-      if (target && target.type === "file") selectFile(target.path);
+      const changed = [...gitStatus.keys()].map((rel) => joinWorkspacePath(rootPath, rel)).sort();
+      if (changed.length === 0) return;
+      const cur = selectedPath ? changed.indexOf(selectedPath) : -1;
+      let next: number;
+      if (direction > 0) next = cur < 0 ? 0 : cur + 1 >= changed.length ? 0 : cur + 1;
+      else next = cur < 0 ? changed.length - 1 : cur - 1 < 0 ? changed.length - 1 : cur - 1;
+      const target = changed[next]!;
+      if (target === selectedPath) return;
+      selectFile(target);
     },
-    [items, gitStatus, rootPath, cursorIndex, paneBodyLines, selectFile, setTreeScrollTop]
+    [gitStatus, rootPath, selectedPath, selectFile]
   );
 
   const refreshGit = useCallback(async (path: string) => {
@@ -214,15 +206,27 @@ export const WorkspaceFileMode = () => {
     setCursorIndex((prev) => Math.min(prev, Math.max(0, items.length - 1)));
   }, [items.length]);
 
+  // Track which paths we've already asked revealPath to expand (so the effect
+  // below resolves post-reveal once `items` recomputes, without re-firing the
+  // async load on every render).
+  const revealedRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!selectedPath) return;
+    // In the full-tree view, ensure the selected file's ancestor directories are
+    // expanded so it is present in `items` (and can be scrolled into view).
+    if (!isDiffMode && !revealedRef.current.has(selectedPath)) {
+      revealedRef.current.add(selectedPath);
+      void revealPath(selectedPath);
+    }
     const index = items.findIndex((item) => item.path === selectedPath);
     if (index < 0) return;
     setCursorIndex(index);
     const currentScroll = useWorkspaceView.getReadonlyState().treeScrollTop;
     setTreeScrollTop(ensureIndexVisible(index, currentScroll, paneBodyLines, items.length));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only sync cursor when selection changes
-  }, [selectedPath]);
+    // Re-run when items change (post-reveal / mode switch) so the reveal + scroll
+    // settle on a location the file is actually present in.
+  }, [selectedPath, items, isDiffMode, revealPath, paneBodyLines, setTreeScrollTop]);
 
   useInput((inputChar, key) => {
     // The quick-open overlay owns the keyboard while it is up.
@@ -248,6 +252,7 @@ export const WorkspaceFileMode = () => {
       reload();
       scrollActivePane("top");
       setRefreshToken((t) => t + 1);
+      revealedRef.current.clear();
       void refreshGit(rootPath);
       return;
     }
