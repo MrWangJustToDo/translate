@@ -30,7 +30,9 @@ export type McpCallToolResult = {
 };
 
 export type TanStackContentPart =
-  { type: "text"; content: string } | { type: "image"; source: { type: "data"; value: string; mimeType: string } };
+  | { type: "text"; content: string }
+  | { type: "image"; source: { type: "data"; value: string; mimeType: string } }
+  | { type: "audio"; source: { type: "data"; value: string; mimeType: string } };
 
 const MULTIMODAL_CONTENT_TYPES = new Set(["image", "audio", "video", "resource"]);
 
@@ -64,6 +66,14 @@ export function mcpContentToTanstack(content: McpContentBlock[] | undefined): st
         if (typeof block.data === "string" && typeof block.mimeType === "string") {
           parts.push({
             type: "image",
+            source: { type: "data", value: block.data, mimeType: block.mimeType },
+          });
+        }
+        break;
+      case "audio":
+        if (typeof block.data === "string" && typeof block.mimeType === "string") {
+          parts.push({
+            type: "audio",
             source: { type: "data", value: block.data, mimeType: block.mimeType },
           });
         }
