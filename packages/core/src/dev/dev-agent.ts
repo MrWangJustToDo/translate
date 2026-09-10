@@ -245,10 +245,9 @@ export { createTanStackSubagentTools, createTanStackTools, getReadOnlyTanStackTo
 export {
   clearStreamingOutput,
   emitStreamingChunk,
-  getStreamingSubscriberCounts,
+  registerStreamingEventBus,
   resetStreamingCallbacksForTests,
-  subscribeStreamingCallback,
-  subscribeStreamingClearCallback,
+  unregisterStreamingEventBus,
 } from "../agent/tools/util/streaming-callback.js";
 export {
   SUMMARY_STREAM_SNAPSHOT_LINE_CAP,

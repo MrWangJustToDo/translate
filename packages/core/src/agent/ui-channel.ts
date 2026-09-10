@@ -4,8 +4,6 @@
 
 import { StreamProcessor } from "@tanstack/ai";
 
-import { Emitter } from "../utils/emitter.js";
-
 import { repairMessagesSnapshotChunk } from "./media/repair-stringified-multimodal.js";
 import { applyToolDenialReason } from "./stream/apply-tool-denial-reason.js";
 import { stripEmptyAssistantShells } from "./stream/empty-assistant-shell.js";
@@ -21,11 +19,8 @@ import { shouldSuppressStaleTextChunk } from "./stream/suppress-stale-text-chunk
 import { BEGIN_SUMMARY_TOOL_NAME } from "./subagent/begin-summary-tool.js";
 import { summaryStreamKey, type SummaryStreamHub } from "./summary-stream";
 
+import type { AgentEventBus } from "./agent-event-bus";
 import type { StreamChunk, StreamProcessorEvents, UIMessage as TanStackUIMessage, ContentPart } from "@tanstack/ai";
-
-type UIChannelEvents = {
-  messages: TanStackUIMessage[];
-};
 
 // ============================================================================
 // Types
@@ -68,7 +63,6 @@ export interface ConsumeRunOptions {
   onUpdate?: (messages: TanStackUIMessage[]) => void;
 }
 
-type MessageListener = (messages: TanStackUIMessage[]) => void;
 type ApprovalListener = (request: UIApprovalRequest) => void;
 
 function readToolCallName(chunk: StreamChunk): string | undefined {
@@ -116,7 +110,14 @@ function readTextDelta(chunk: StreamChunk): string | undefined {
  */
 export class AgentUIChannel {
   private readonly processor: StreamProcessor;
-  private readonly messageEvents = new Emitter<UIChannelEvents>();
+  /** Unified event bus for the owning agent (session `messages` projection). */
+  private eventBus?: AgentEventBus;
+
+  /** @internal Attach the agent's scoped unified event bus. */
+  setEventBus(bus: AgentEventBus): void {
+    this.eventBus = bus;
+    bus.retain("session:messages", () => (this.getMessages() ?? []) as never);
+  }
   private readonly approvalListeners = new Set<ApprovalListener>();
   private readonly customEventListeners = new Set<UICustomEventListener>();
   private parentTaskToolCallId?: string;
@@ -210,15 +211,6 @@ export class AgentUIChannel {
 
   addToolResult(toolCallId: string, output: unknown, error?: string): void {
     this.processor.addToolResult(toolCallId, output, error);
-  }
-
-  /** Subscribe to typed UI events (`messages` carries full UIMessage[]). */
-  on<K extends keyof UIChannelEvents>(type: K, listener: (payload: UIChannelEvents[K]) => void): () => void {
-    return this.messageEvents.on(type, listener);
-  }
-
-  subscribe(listener: MessageListener): () => void {
-    return this.messageEvents.on("messages", listener);
   }
 
   subscribeApprovalRequests(listener: ApprovalListener): () => void {
@@ -441,7 +433,8 @@ export class AgentUIChannel {
   private handleMessagesChange(messages: TanStackUIMessage[]): void {
     this.revision += 1;
     this.onUpdate?.(messages);
-    this.messageEvents.emit("messages", messages);
+    // Session `messages` projection — the bus is the single change mechanism.
+    this.eventBus?.emit("session:messages", messages);
     // Summary streaming is driven by TEXT_MESSAGE_CONTENT chunks in processChunk —
     // do not diff UIMessage snapshots (that caused mid-stream flicker).
   }

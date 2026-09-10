@@ -20,7 +20,6 @@ export { Emitter } from "./utils/emitter.js";
 export {
   AGENT_SESSION_CHANNELS,
   DEFAULT_AGENT_SESSION_CHANNELS,
-  DEFAULT_SESSION_LIFECYCLE_EVENTS,
   createLocalAgentSession,
   createLocalAgentSessionHost,
   sessionForSubagent,

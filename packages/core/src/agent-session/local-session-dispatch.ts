@@ -142,6 +142,7 @@ export async function dispatchLocalAgentSessionCommand(
       }
       case "mcp.refresh": {
         const servers = managed.getMcpManager()?.getServerStatuses() ?? [];
+        managed.getEventBus()?.emit("session:mcp", { servers });
         return { ok: true, data: { servers } };
       }
       case "extension.toggle": {
@@ -150,7 +151,11 @@ export async function dispatchLocalAgentSessionCommand(
           return { ok: false, code: "failed", error: "No extension runner" };
         }
         const result = await runner.setEnabled(command.id, command.enabled);
-        return result.ok ? { ok: true, data: result } : { ok: false, code: "failed", error: result.message };
+        if (result.ok) {
+          managed.getEventBus()?.emit("session:extensions", { extensions: runner.getExtensionInfos() });
+          return { ok: true, data: result };
+        }
+        return { ok: false, code: "failed", error: result.message };
       }
       case "extension.invokeCommand": {
         const cmd = managed.getExtensionCommands().find((c) => c.name === command.name);

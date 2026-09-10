@@ -1,5 +1,3 @@
-import { Emitter } from "../../utils/emitter.js";
-
 import { extractDoneSteps, extractPlan, type PlanStep } from "./extract-plan.js";
 import { formatStructuredPlanMarkdown, stepsFromTexts, type StructuredPlanInput } from "./plan-format.js";
 import { buildPlanExecuteSteerMessage } from "./plan-prompts.js";
@@ -8,6 +6,7 @@ import { extractGoalFromPlanMarkdown } from "./plan-summary.js";
 import { parseVerificationItemsFromPlanMarkdown } from "./plan-verification.js";
 
 import type { EmitAgentTelemetryFn } from "../../runtime-types/agent-events.js";
+import type { AgentEventBus } from "../agent-event-bus";
 import type { TodoManager } from "../todo/todo-manager.js";
 
 export type PlanModePhase = "off" | "planning" | "ready" | "executing" | "retro";
@@ -27,10 +26,6 @@ export interface PlanModeState {
   /** Relative path under `.agents/plans/` when auto-persisted or loaded. */
   planFilePath: string | null;
 }
-
-type PlanModeEvents = {
-  change: PlanModeState;
-};
 
 export interface PlanModeControllerDeps {
   emitEvent: EmitAgentTelemetryFn;
@@ -72,17 +67,21 @@ export class PlanModeController {
   private preservedExistingTodos = false;
   private planFilePath: string | null = null;
   private todoUnsub: (() => void) | null = null;
-  private readonly events = new Emitter<PlanModeEvents>();
+
+  /** Unified event bus for the owning agent (session `plan` projection). */
+  private eventBus?: AgentEventBus;
 
   constructor(private readonly deps: PlanModeControllerDeps) {}
 
-  /** Subscribe to plan public-state changes. */
-  on<K extends keyof PlanModeEvents>(type: K, listener: (payload: PlanModeEvents[K]) => void): () => void {
-    return this.events.on(type, listener);
+  /** @internal Attach the agent's scoped unified event bus. */
+  setEventBus(bus: AgentEventBus): void {
+    this.eventBus = bus;
+    bus.retain("session:plan", () => this.getState());
   }
 
   private notifyChange(): void {
-    this.events.emit("change", this.getState());
+    // Session `plan` projection — the bus is the single change mechanism.
+    this.eventBus?.emit("session:plan", this.getState());
     this.deps.onPhaseChange?.();
   }
 
@@ -499,11 +498,16 @@ export class PlanModeController {
 
   private attachTodoListener(): void {
     this.detachTodoListener();
-    const todoManager = this.deps.getTodoManager();
-    if (!todoManager) return;
-    this.todoUnsub = todoManager.on("change", () => {
-      this.maybeEnterRetro();
-    });
+    if (!this.deps.getTodoManager()) return;
+    // Todo changes surface as `session:todos` on the agent's scoped bus.
+    this.todoUnsub =
+      this.eventBus?.on(
+        "session:todos",
+        () => {
+          this.maybeEnterRetro();
+        },
+        { replay: false }
+      ) ?? null;
   }
 
   private detachTodoListener(): void {

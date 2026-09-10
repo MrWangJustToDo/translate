@@ -14,3 +14,11 @@ export type { AgentEventType, EmitAgentTelemetryFn } from "./agent-events.js";
 export type { AgentEventPayloadMap, AgentEventPayload, EmptyAgentEventPayload } from "./agent-event-payloads.js";
 
 export type { ManagedAgent, AgentManager, UsageTracker, AgentUIChannel, AgentStatusController } from "./hosts.js";
+
+export type {
+  AgentL1State,
+  AgentMode,
+  QueuedMessageContent,
+  QueuedMessagesSnapshot,
+  UsageChangeSnapshot,
+} from "./session-payloads.js";

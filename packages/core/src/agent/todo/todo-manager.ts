@@ -1,4 +1,3 @@
-import { Emitter } from "../../utils/emitter.js";
 import { generateId, generateShortId } from "../../utils/generate-id.js";
 
 import {
@@ -12,9 +11,7 @@ import {
   type TodoStatus,
 } from "./types.js";
 
-type TodoManagerEvents = {
-  change: TodoItem[];
-};
+import type { AgentEventBus } from "../agent-event-bus";
 
 // ============================================================================
 // TodoManager ID Generator
@@ -90,7 +87,14 @@ export class TodoManager {
    *  alone can replay a historical value byte-identically). */
   private nagEpisode = 0;
 
-  private readonly events = new Emitter<TodoManagerEvents>();
+  /** Unified event bus for the owning agent (session `todos` projection). */
+  private eventBus?: AgentEventBus;
+
+  /** @internal Attach the agent's scoped unified event bus. */
+  setEventBus(bus: AgentEventBus): void {
+    this.eventBus = bus;
+    bus.retain("session:todos", () => ({ items: this.getItems(), title: this.title }));
+  }
 
   /** Auto-clear timer (when all todos completed) */
   private autoClearTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -340,19 +344,9 @@ export class TodoManager {
     return this.items.filter((item) => item.status === "pending" || item.status === "in_progress");
   }
 
-  // ============================================================================
-  // Event Subscription
-  // ============================================================================
-
-  /**
-   * Subscribe to typed todo events (`change` carries current items).
-   */
-  on<K extends keyof TodoManagerEvents>(type: K, listener: (payload: TodoManagerEvents[K]) => void): () => void {
-    return this.events.on(type, listener);
-  }
-
   private notifyListeners(): void {
-    this.events.emit("change", this.getItems());
+    // Session `todos` projection — the bus is the single change mechanism.
+    this.eventBus?.emit("session:todos", { items: this.getItems(), title: this.title });
   }
 
   // ============================================================================

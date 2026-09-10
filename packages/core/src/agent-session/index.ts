@@ -22,8 +22,6 @@ export type {
   AgentSessionListEntry,
 } from "./host-types.js";
 
-export { DEFAULT_SESSION_LIFECYCLE_EVENTS } from "./lifecycle-filter.js";
-
 export {
   createLocalAgentSession,
   sessionForSubagent,

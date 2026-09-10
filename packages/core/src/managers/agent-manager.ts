@@ -1,21 +1,22 @@
+import { createAgentEventBus } from "../agent/agent-event-bus";
 import { AGENT_LOG_DIR } from "../agent/persistence/types.js";
 import { createSubagentTools } from "../agent/subagent/subagent-tools.js";
+import { unregisterStreamingEventBus } from "../agent/tools/util/streaming-callback.js";
 import { getEnv } from "../env.js";
 import { ACTIVE_STATUSES } from "../runtime-types/agent-status.js";
 
 import { buildManagedAgent } from "./agent-factory.js";
 import { runManagedAgent, runManagedAgentStream, type RunAgentStreamInput } from "./run-agent.js";
 import { emitSessionBootstrapEvents } from "./session-bootstrap-events.js";
-import { AgentTelemetryBus } from "./telemetry/agent-telemetry-bus.js";
 import { bridgeTelemetryToAgentLog } from "./telemetry/event-log-bridge.js";
 
 import type { ManagedAgent, ManagedAgentConfig } from "./managed-agent.js";
-import type { AgentEvent, AgentEventListener, AgentEventType } from "./telemetry/agent-telemetry-bus.js";
+import type { AgentEvent, AgentEventListener, AgentEventBus, AgentEventType } from "../agent/agent-event-bus";
 import type { ResumeResult, SessionData } from "../agent/persistence/types.js";
 import type { ToolsRecord } from "../agent/tools/runtime/tools-record.js";
 import type { StreamChunk } from "@tanstack/ai";
 
-export type { AgentEvent, AgentEventListener, AgentEventType } from "./telemetry/agent-telemetry-bus.js";
+export type { AgentEvent, AgentEventListener, AgentEventBus, AgentEventType } from "../agent/agent-event-bus";
 export type { ManagedAgent, ManagedAgentConfig } from "./managed-agent.js";
 export type { RunAgentStreamInput } from "./run-agent.js";
 
@@ -78,8 +79,14 @@ export class AgentManager {
    */
   private sessionOwners: Map<string, string> = new Map();
 
-  /** Unified event bus for in-process listeners */
-  private eventBus = new AgentTelemetryBus();
+  /** Unified event bus root — single source for every agent event. */
+  private readonly rootEventBus = createAgentEventBus();
+
+  /** Process-wide observer bus (the unified root; events up-flow from agent scopes). */
+  private readonly eventBus: AgentEventBus = this.rootEventBus;
+
+  /** Per-agent scoped buses (cached by agent id). */
+  private readonly agentBusScopes = new Map<string, AgentEventBus>();
 
   private readonly _detachEventLogBridge: () => void;
 
@@ -116,11 +123,28 @@ export class AgentManager {
   }
 
   /**
+   * Scoped unified event bus for one agent. Subagents are scoped under their
+   * parent, so their events up-flow to the parent and root observers.
+   */
+  of(agentId: string, parentId?: string): AgentEventBus {
+    const cached = this.agentBusScopes.get(agentId);
+    if (cached) return cached;
+    const parent = parentId ? this.of(parentId) : this.rootEventBus;
+    const bus = parent.scope(agentId);
+    this.agentBusScopes.set(agentId, bus);
+    return bus;
+  }
+
+  /**
    * Emit an agent event.
    * @internal Agent code should use `emitAgentTelemetry()` / `agent.emitEvent()` instead.
    */
   emit(event: AgentEvent): void {
-    this.eventBus.emit(event);
+    this.eventBus.emit(event.type, event.payload, {
+      agentId: event.agentId,
+      ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
+      ...(event.sessionId !== undefined ? { sessionId: event.sessionId } : {}),
+    });
   }
 
   // ============================================================================
@@ -307,6 +331,9 @@ export class AgentManager {
   destroyAgent(id: string): void {
     const managedAgent = this.agents.get(id);
     if (!managedAgent) return;
+
+    unregisterStreamingEventBus(id);
+    this.agentBusScopes.delete(id);
 
     // Release any disk-session ownership this agent held (root agents own one).
     const ownedSessionId = managedAgent.getSessionData?.()?.id;

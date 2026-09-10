@@ -61,6 +61,6 @@ export async function emitSessionBootstrapEvents(
   emitAgentTelemetry(managed, "session:start", { cwd: context.cwd });
 
   // Fire the interceptable per-agent session:start on the ExtensionEventBus.
-  // Distinct from the AgentTelemetryBus telemetry above (fire-and-forget, not interceptable).
+  // Distinct from the unified-bus telemetry above (fire-and-forget, not interceptable).
   managed.extensionRunner?.emitSessionStart(context.cwd, managed.id);
 }

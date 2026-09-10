@@ -1,11 +1,11 @@
 /**
- * In-process AgentSession: fans domain Emitters + filtered AgentTelemetryBus into channels.
+ * In-process AgentSession: projects the agent's scoped {@link AgentEventBus}
+ * into session channels (one subscription, routed by `AGENT_EVENT_META.channel`).
  */
 
-import { subscribeStreamingCallback, subscribeStreamingClearCallback } from "../agent/tools/util/streaming-callback.js";
+import { AGENT_EVENT_META as EVENT_META } from "../agent/agent-event-bus";
 import { Emitter } from "../utils/emitter.js";
 
-import { DEFAULT_SESSION_LIFECYCLE_EVENTS } from "./lifecycle-filter.js";
 import { dispatchLocalAgentSessionCommand } from "./local-session-dispatch.js";
 import { readLocalAgentSessionSnapshot } from "./local-session-snapshot.js";
 import {
@@ -20,29 +20,20 @@ import {
   type AgentSessionSubscriber,
 } from "./types.js";
 
+import type { AgentEvent, AgentEventType } from "../agent/agent-event-bus";
 import type { AgentManager } from "../managers/agent-manager.js";
 import type { ManagedAgent } from "../managers/managed-agent.js";
-import type { AgentEvent } from "../managers/telemetry/agent-telemetry-bus.js";
-import type { AgentEventType } from "../runtime-types/agent-events.js";
 
 /** Manager surface used by Local Session (AgentManager satisfies this). */
-export type LocalAgentSessionManager = Pick<AgentManager, "getAgent" | "getSubagents"> & {
-  on?: (type: AgentEventType, listener: (event: AgentEvent) => void) => () => void;
-};
+export type LocalAgentSessionManager = Pick<AgentManager, "getAgent" | "getSubagents">;
 
 export interface CreateLocalAgentSessionOptions {
   managed: ManagedAgent;
   manager?: LocalAgentSessionManager | null;
-  /** Override lifecycle event filter (default {@link DEFAULT_SESSION_LIFECYCLE_EVENTS}). */
-  lifecycleEvents?: readonly AgentEventType[];
 }
 
 function now(): number {
   return Date.now();
-}
-
-function channelAllowed(channel: AgentSessionChannel, selected: ReadonlySet<AgentSessionChannel>): boolean {
-  return selected.has(channel);
 }
 
 function resolveChannels(options?: AgentSessionSubscribeOptions): Set<AgentSessionChannel> {
@@ -52,21 +43,81 @@ function resolveChannels(options?: AgentSessionSubscribeOptions): Set<AgentSessi
   return new Set(DEFAULT_AGENT_SESSION_CHANNELS);
 }
 
+/**
+ * Channel → retained event type. A subscriber receives the current value for
+ * each such channel on subscribe (independent of the shared bus subscription),
+ * so a second subscriber still gets initial state without a snapshot refetch.
+ */
+const RETAINED_CHANNEL_EVENT = (() => {
+  const map = new Map<AgentSessionChannel, AgentEventType>();
+  for (const eventName of Object.keys(EVENT_META) as AgentEventType[]) {
+    const meta = EVENT_META[eventName];
+    if (meta.retained && meta.channel && !map.has(meta.channel)) {
+      map.set(meta.channel, eventName);
+    }
+  }
+  return map;
+})();
+
+type ChannelPayload<C extends AgentSessionChannel> = Extract<AgentSessionEvent, { channel: C }>["payload"];
+
+/**
+ * Project one scoped bus event onto its declared session channel. Returns null
+ * for events that do not map to a channel.
+ */
+function projectChannelEvent(channel: AgentSessionChannel, event: AgentEvent): AgentSessionEvent | null {
+  const ts = event.ts;
+  switch (channel) {
+    case "state":
+      return { channel, payload: event.payload as ChannelPayload<"state">, ts };
+    case "messages":
+      return { channel, payload: event.payload as ChannelPayload<"messages">, ts };
+    case "queues":
+      return { channel, payload: event.payload as ChannelPayload<"queues">, ts };
+    case "usage":
+      return { channel, payload: event.payload as ChannelPayload<"usage">, ts };
+    case "todos":
+      return { channel, payload: event.payload as ChannelPayload<"todos">, ts };
+    case "plan":
+      return { channel, payload: event.payload as ChannelPayload<"plan">, ts };
+    case "tool":
+      return { channel, payload: event.payload as ChannelPayload<"tool">, ts };
+    case "summary":
+      return { channel, payload: event.payload as ChannelPayload<"summary">, ts };
+    case "extensions":
+      return { channel, payload: event.payload as ChannelPayload<"extensions">, ts };
+    case "mode":
+      return { channel, payload: event.payload as ChannelPayload<"mode">, ts };
+    case "mcp":
+      return {
+        channel,
+        payload: { servers: (event.payload as { servers?: ChannelPayload<"mcp">["servers"] }).servers ?? [] },
+        ts,
+      };
+    case "lifecycle":
+      // The lifecycle channel carries the typed AgentEvent envelope itself.
+      return { channel, payload: event as unknown as ChannelPayload<"lifecycle">, ts };
+    case "extension-ui":
+      return { channel, payload: event.payload as ChannelPayload<"extension-ui">, ts };
+    default:
+      return null;
+  }
+}
+
 class LocalAgentSessionImpl implements AgentSession {
   readonly id: string;
   private readonly managed: ManagedAgent;
   private readonly manager: LocalAgentSessionManager | null | undefined;
-  private readonly lifecycleEvents: readonly AgentEventType[];
   /** Multicast bus for session events; all channels fan out through here. */
   private readonly events = new Emitter<Record<AgentSessionChannel, AgentSessionEvent>>();
-  /** Ref-counted underlying source wiring per channel (see acquireSource). */
-  private readonly sourceRefs = new Map<AgentSessionChannel, { count: number; teardown: () => void }>();
+  /** Ref count for the single underlying bus subscription. */
+  private sourceRefCount = 0;
+  private sourceTeardown: (() => void) | null = null;
 
   constructor(options: CreateLocalAgentSessionOptions) {
     this.managed = options.managed;
     this.manager = options.manager ?? options.managed.manager ?? null;
     this.id = options.managed.id;
-    this.lifecycleEvents = options.lifecycleEvents ?? DEFAULT_SESSION_LIFECYCLE_EVENTS;
   }
 
   getSnapshot(): AgentSessionSnapshot {
@@ -87,20 +138,29 @@ class LocalAgentSessionImpl implements AgentSession {
     for (const channel of selected) {
       unsubs.push(this.events.on(channel, handler));
     }
-    // Underlying sources must be wired once per session, not once per
-    // subscribe() call: each subscriber registers its handler on the shared
-    // bus above, and a per-subscribe source bridge would re-emit every source
-    // event once per subscriber (N subscribers → N copies of every event),
-    // duplicating streamed text (summary chunks arriving doubled) and other
-    // payloads. Sources are ref-counted and unwired when the last subscriber
-    // for a channel leaves.
-    for (const channel of selected) {
-      unsubs.push(this.acquireSource(channel));
+
+    // Per-subscriber reconcile: emit the current retained value for each
+    // selected channel so late subscribers see initial state without a refetch.
+    const bus = this.managed.getEventBus();
+    if (bus) {
+      for (const channel of selected) {
+        const type = RETAINED_CHANNEL_EVENT.get(channel);
+        if (!type) continue;
+        const payload = bus.retainedValue(type);
+        if (payload === undefined) continue;
+        const projected = projectChannelEvent(channel, {
+          type,
+          ts: now(),
+          agentId: this.managed.id,
+          ...(this.managed.parentId !== undefined ? { parentId: this.managed.parentId } : {}),
+          payload,
+        } as AgentEvent);
+        if (projected) this.events.emit(channel, projected);
+      }
     }
 
     // Per-subscriber reconcile: replay the extension status set that was set
-    // before this subscription mounted (the source wiring itself only does
-    // this once for the first subscriber on the channel).
+    // before this subscription mounted.
     if (selected.has("extension-ui")) {
       const ui = this.managed.extensionRunner?.getUI();
       if (ui) {
@@ -116,6 +176,14 @@ class LocalAgentSessionImpl implements AgentSession {
       }
     }
 
+    // The underlying bus is wired once per session (ref-counted), not once per
+    // subscribe() call: each subscriber registers its handler on the shared bus
+    // above, and a per-subscribe wiring would duplicate every event per
+    // subscriber (N subscribers → N copies).
+    this.sourceRefCount += 1;
+    if (!this.sourceTeardown) this.sourceTeardown = this.wireSource();
+    unsubs.push(() => this.releaseSource());
+
     let active = true;
     return () => {
       if (!active) return;
@@ -130,202 +198,42 @@ class LocalAgentSessionImpl implements AgentSession {
     };
   }
 
-  /** Ref-count the underlying source wiring for one channel. */
-  private acquireSource(channel: AgentSessionChannel): () => void {
-    const ref = this.sourceRefs.get(channel);
-    if (ref) {
-      ref.count += 1;
-    } else {
-      this.sourceRefs.set(channel, { count: 1, teardown: this.wireSource(channel) });
-    }
-    return () => this.releaseSource(channel);
-  }
-
-  private releaseSource(channel: AgentSessionChannel): void {
-    const ref = this.sourceRefs.get(channel);
-    if (!ref) return;
-    ref.count -= 1;
-    if (ref.count <= 0) {
-      this.sourceRefs.delete(channel);
-      try {
-        ref.teardown();
-      } catch {
-        // Ignore teardown errors
-      }
+  private releaseSource(): void {
+    this.sourceRefCount -= 1;
+    if (this.sourceRefCount > 0) return;
+    this.sourceRefCount = 0;
+    const teardown = this.sourceTeardown;
+    this.sourceTeardown = null;
+    try {
+      teardown?.();
+    } catch {
+      // Ignore teardown errors
     }
   }
 
   /**
-   * Wire the underlying event source for one channel. Runs once per session
-   * regardless of how many subscribers listen on the channel.
+   * Wire the scoped bus once per session. Each observer event is routed to the
+   * channel declared in {@link AGENT_EVENT_META}; `subscribe({channels})` only
+   * filters which of those the subscriber receives.
    */
-  private wireSource(channel: AgentSessionChannel): () => void {
-    const managed = this.managed;
-    const manager = this.manager;
-    // Narrow selection containing only the channel being wired; the guards
-    // below reuse the channelAllowed() helper against it.
-    const selected = new Set([channel]);
+  private wireSource(): () => void {
     const unsubs: Array<() => void> = [];
+    const bus = this.managed.getEventBus();
 
-    if (channelAllowed("state", selected)) {
-      unsubs.push(
-        managed.on("change", (payload) => {
-          this.events.emit("state", { channel: "state", payload, ts: now() });
-        })
-      );
-    }
-
-    if (channelAllowed("messages", selected)) {
-      let messagesUnsub: (() => void) | undefined;
-      const wireMessages = () => {
-        messagesUnsub?.();
-        messagesUnsub = undefined;
-        const ui = managed.ui;
-        if (!ui) return;
-        messagesUnsub = ui.on("messages", (payload) => {
-          this.events.emit("messages", { channel: "messages", payload, ts: now() });
-        });
-      };
-      wireMessages();
-      unsubs.push(
-        managed.on("ui", () => {
-          wireMessages();
-        })
-      );
-      unsubs.push(() => {
-        messagesUnsub?.();
-      });
-    }
-
-    if (channelAllowed("queues", selected)) {
-      const chat = managed.getChatController();
-      if (chat) {
+    if (bus) {
+      for (const eventName of Object.keys(EVENT_META) as AgentEventType[]) {
+        const channel = EVENT_META[eventName].channel;
+        if (!channel) continue;
         unsubs.push(
-          chat.on("change", (payload) => {
-            this.events.emit("queues", { channel: "queues", payload, ts: now() });
-          })
-        );
-      }
-    }
-
-    if (channelAllowed("usage", selected)) {
-      unsubs.push(
-        managed.usage.on("change", (payload) => {
-          this.events.emit("usage", { channel: "usage", payload, ts: now() });
-        })
-      );
-    }
-
-    if (channelAllowed("todos", selected)) {
-      const todos = managed.todoManager;
-      if (todos) {
-        unsubs.push(
-          todos.on("change", (items) => {
-            this.events.emit("todos", {
-              channel: "todos",
-              payload: { items, title: todos.getTitle() },
-              ts: now(),
-            });
-          })
-        );
-      }
-    }
-
-    if (channelAllowed("plan", selected)) {
-      unsubs.push(
-        managed.planMode.on("change", (payload) => {
-          this.events.emit("plan", { channel: "plan", payload, ts: now() });
-          // Agent mode is derived from plan phase (+ auto mode) — keep remote
-          // snapshot.mode fresh when plan phase changes outside a dispatch
-          // (e.g. plan auto-execution after seeding).
-          if (channel === "plan") {
-            this.events.emit("mode", {
-              channel: "mode",
-              payload: { mode: managed.getAgentMode(), autoMode: managed.isAutoModeEnabled() },
-              ts: now(),
-            });
-          }
-        })
-      );
-    }
-
-    if (channelAllowed("tool", selected)) {
-      unsubs.push(
-        subscribeStreamingCallback(
-          (chunk) => {
-            this.events.emit("tool", { channel: "tool", payload: { kind: "chunk", chunk }, ts: now() });
-          },
-          { agentId: managed.id }
-        )
-      );
-      unsubs.push(
-        subscribeStreamingClearCallback(
-          (toolCallId) => {
-            this.events.emit("tool", { channel: "tool", payload: { kind: "clear", toolCallId }, ts: now() });
-          },
-          { agentId: managed.id }
-        )
-      );
-    }
-
-    if (channelAllowed("summary", selected) && managed.summaryStreams) {
-      unsubs.push(
-        managed.summaryStreams.subscribe((payload) => {
-          this.events.emit("summary", { channel: "summary", payload, ts: now() });
-        })
-      );
-    }
-
-    // No `log` channel: log observability is provided exclusively by the
-    // persisted JSONL file sink (.agents/logs/{sessionId}/agent.log).
-
-    if (channelAllowed("extension-ui", selected)) {
-      const ui = managed.extensionRunner?.getUI();
-      if (ui) {
-        unsubs.push(
-          ui.subscribe<{ key: string; text: string }>("set-status", (data) => {
-            this.events.emit("extension-ui", {
-              channel: "extension-ui",
-              payload: { type: "set-status", ...data },
-              ts: now(),
-            });
-          }),
-          ui.subscribe<{ message: string; level?: "success" | "info" | "error" }>("notify", (data) => {
-            this.events.emit("extension-ui", {
-              channel: "extension-ui",
-              payload: { type: "notify", ...data },
-              ts: now(),
-            });
-          }),
-          ui.subscribe<{ id: string; component: string; props: Record<string, unknown> }>("set-widget", (data) => {
-            this.events.emit("extension-ui", {
-              channel: "extension-ui",
-              payload: { type: "set-widget", ...data },
-              ts: now(),
-            });
-          }),
-          ui.subscribe<{ id: string; question: string }>("confirm", (data) => {
-            this.events.emit("extension-ui", {
-              channel: "extension-ui",
-              payload: { type: "confirm", ...data },
-              ts: now(),
-            });
-          })
-        );
-      }
-    }
-
-    if (channelAllowed("lifecycle", selected) && manager?.on) {
-      const filter = new Set(this.lifecycleEvents);
-      const on = manager.on.bind(manager);
-      for (const type of this.lifecycleEvents) {
-        unsubs.push(
-          on(type, (event) => {
-            if (!filter.has(event.type)) return;
-            if (event.agentId === managed.id || (event.parentId === managed.id && event.type.startsWith("subagent:"))) {
-              this.events.emit("lifecycle", { channel: "lifecycle", payload: event, ts: now() });
-            }
-          })
+          bus.on(
+            eventName,
+            (event) => {
+              if (!this.acceptEvent(event)) return;
+              const projected = projectChannelEvent(channel, event);
+              if (projected) this.events.emit(channel, projected);
+            },
+            { replay: false }
+          )
         );
       }
     }
@@ -341,50 +249,18 @@ class LocalAgentSessionImpl implements AgentSession {
     };
   }
 
-  async dispatch(command: AgentSessionCommand): Promise<AgentSessionCommandResult> {
-    const result = await dispatchLocalAgentSessionCommand(this.managed, this.manager, command);
-    if (result.ok) {
-      // Post-command incremental events keep remote caches (RemoteSessionClient)
-      // fresh for state that has no dedicated event source (extension list, MCP
-      // servers, agent mode). Local sessions re-read getSnapshot() live, so this
-      // is a no-op refresh there; over the wire it is the only path that updates
-      // the cached snapshot fields.
-      this.broadcastPostCommand(command);
-    }
-    return result;
+  /**
+   * Scope routing delivers descendant events to ancestors. A session accepts
+   * its own events plus `subagent:*` events emitted by its direct children
+   * (mirrors the previous manual id filtering).
+   */
+  private acceptEvent(event: AgentEvent): boolean {
+    if (event.agentId === this.managed.id) return true;
+    return event.parentId === this.managed.id && event.type.startsWith("subagent:");
   }
 
-  /** Broadcast a protocol-level incremental event after a state-mutating command. */
-  private broadcastPostCommand(command: AgentSessionCommand): void {
-    const ts = now();
-    let event: AgentSessionEvent | undefined;
-    switch (command.type) {
-      case "extension.toggle":
-        event = {
-          channel: "extensions",
-          payload: { extensions: this.managed.extensionRunner?.getExtensionInfos() ?? [] },
-          ts,
-        };
-        break;
-      case "mcp.refresh":
-        event = {
-          channel: "mcp",
-          payload: { servers: this.managed.getMcpManager()?.getServerStatuses() ?? [] },
-          ts,
-        };
-        break;
-      case "mode.set":
-      case "mode.toggle":
-        event = {
-          channel: "mode",
-          payload: { mode: this.managed.getAgentMode(), autoMode: this.managed.isAutoModeEnabled() },
-          ts,
-        };
-        break;
-      default:
-        return;
-    }
-    this.events.emit(event.channel, event);
+  async dispatch(command: AgentSessionCommand): Promise<AgentSessionCommandResult> {
+    return dispatchLocalAgentSessionCommand(this.managed, this.manager, command);
   }
 }
 

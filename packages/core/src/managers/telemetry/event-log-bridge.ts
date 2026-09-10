@@ -1,6 +1,6 @@
 import { DEFAULT_EVENT_LOG_RULES, type EventLogRule } from "./event-log-rules.js";
 
-import type { AgentEvent, AgentTelemetryBus, AgentEventType } from "./agent-telemetry-bus.js";
+import type { AgentEvent, AgentEventBus, AgentEventType } from "../../agent/agent-event-bus";
 import type { AgentLog } from "../../agent/agent-log/agent-log.js";
 import type { McpServerStatus } from "../../agent/mcp/manager.js";
 
@@ -186,11 +186,12 @@ function logCompactionAuto(log: AgentLog, event: AgentEvent): void {
 }
 
 /**
- * Bridge {@link AgentTelemetryBus} events into per-agent {@link AgentLog} entries.
- * Centralizes lifecycle logging so emit sites do not duplicate log calls.
+ * Bridge unified {@link AgentEventBus} events into per-agent {@link AgentLog}
+ * entries. Centralizes lifecycle logging so emit sites do not duplicate log
+ * calls. This is the only `"*"` observer consumer in core.
  */
 export function bridgeTelemetryToAgentLog(
-  bus: AgentTelemetryBus,
+  bus: AgentEventBus,
   resolveLog: EventLogResolver,
   policy?: EventLogPolicy
 ): () => void {

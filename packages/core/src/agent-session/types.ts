@@ -10,6 +10,7 @@
  * - Creating a brand-new agent / disk session is Host.create (+ switch active id), not `clear`.
  */
 
+import type { AgentEvent } from "../agent/agent-event-bus";
 import type { ExtensionInfo } from "../agent/extension/types.js";
 import type { McpServerStatus } from "../agent/mcp/manager.js";
 import type { PlanModeState } from "../agent/plan/plan-mode-controller.js";
@@ -18,7 +19,6 @@ import type { TodoItem } from "../agent/todo/types.js";
 import type { StreamingChunk } from "../agent/tools/util/streaming-callback.js";
 import type { QueuedMessagesSnapshot } from "../managers/controllers/agent-chat-controller.js";
 import type { AgentL1State, AgentMode } from "../managers/managed-agent.js";
-import type { AgentEvent } from "../managers/telemetry/agent-telemetry-bus.js";
 import type { UsageChangeSnapshot } from "../managers/telemetry/usage-tracker.js";
 import type { ModelInfo, ModelStyle, ReasoningEffort } from "../models/types.js";
 import type { AgentRetryState } from "../runtime-types/agent-retry.js";

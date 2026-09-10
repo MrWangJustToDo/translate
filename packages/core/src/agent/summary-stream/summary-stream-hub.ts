@@ -2,16 +2,15 @@
  * Per-agent multi-key summary stream hub (task + compact).
  */
 
-import { Emitter } from "../../utils/emitter.js";
-
 import { applySummaryStreamAppend, emptySummaryLineBuffer, SUMMARY_STREAM_SNAPSHOT_LINE_CAP } from "./line-buffer.js";
 import {
   summaryStreamKey,
   type SummaryStreamEvent,
-  type SummaryStreamListener,
   type SummaryStreamSnapshot,
   type SummaryStreamSource,
 } from "./types.js";
+
+import type { AgentEventBus } from "../agent-event-bus";
 
 interface StreamEntry {
   source: SummaryStreamSource;
@@ -24,10 +23,6 @@ interface StreamEntry {
   pendingLine: string;
   status: SummaryStreamSnapshot["status"];
 }
-
-type SummaryStreamHubEvents = {
-  event: SummaryStreamEvent;
-};
 
 export interface SummaryStreamResetInput {
   source: SummaryStreamSource;
@@ -55,10 +50,13 @@ function resolveId(input: SummaryStreamResetInput): string {
  */
 export class SummaryStreamHub {
   private readonly streams = new Map<string, StreamEntry>();
-  private readonly events = new Emitter<SummaryStreamHubEvents>();
 
-  subscribe(listener: SummaryStreamListener): () => void {
-    return this.events.on("event", listener);
+  /** Unified event bus for the owning agent (session `summary` projection). */
+  private eventBus?: AgentEventBus;
+
+  /** @internal Attach the agent's scoped unified event bus. */
+  setEventBus(bus: AgentEventBus): void {
+    this.eventBus = bus;
   }
 
   getSnapshot(key: string): SummaryStreamSnapshot | null {
@@ -150,6 +148,7 @@ export class SummaryStreamHub {
   }
 
   private emit(event: SummaryStreamEvent): void {
-    this.events.emit("event", event);
+    // Session `summary` projection — the bus is the single change mechanism.
+    this.eventBus?.emit("session:summary", event);
   }
 }

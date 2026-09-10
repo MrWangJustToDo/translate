@@ -1,4 +1,5 @@
 import { getEnv, hasCoreEnv } from "../../env.js";
+import { createAgentEventBus } from "../agent-event-bus";
 
 import { z } from "./extension-zod.js";
 
@@ -22,48 +23,45 @@ import type {
 } from "./types.js";
 import type { CoreEnv } from "../../env.js";
 import type { EmitAgentTelemetryFn } from "../../runtime-types/agent-events.js";
+import type { AgentEventBus } from "../agent-event-bus";
 import type { AgentLog } from "../agent-log/agent-log.js";
 
 // ============================================================================
 // ExtensionEventBus implementation
 // ============================================================================
 
-class DefaultExtensionEventBus implements ExtensionEventBus {
-  private handlers = new Map<string, Set<EventInterceptor<InterceptableEvent>>>();
+/**
+ * {@link ExtensionEventBus} backed by the unified {@link AgentEventBus}.
+ * Interception (async, ordered, shared mutable event, cancel short-circuit) is
+ * delegated to the unified bus's `intercept` mode; hook names are unchanged.
+ */
+class BusExtensionEventBus implements ExtensionEventBus {
+  private readonly disposers = new Map<EventInterceptor<InterceptableEvent>, () => void>();
+
+  constructor(private readonly bus: AgentEventBus) {}
 
   async emit<T extends InterceptableEvent>(event: T): Promise<T["defaultReturn"] | undefined> {
-    const handlers = this.handlers.get(event.type);
-    if (!handlers || handlers.size === 0) return event.defaultReturn;
-
-    for (const handler of handlers) {
-      const result = await handler(event);
-      if (result === false || event.skipDefault) {
-        return undefined;
-      }
-    }
-
-    return event.defaultReturn;
+    return this.bus.intercept(event);
   }
 
   on<T extends InterceptableEvent>(type: string, handler: EventInterceptor<T>): () => void {
-    if (!this.handlers.has(type)) {
-      this.handlers.set(type, new Set());
-    }
-    this.handlers.get(type)!.add(handler as EventInterceptor<InterceptableEvent>);
-
+    const key = handler as EventInterceptor<InterceptableEvent>;
+    const unsub = this.bus.onIntercept(type, handler);
+    this.disposers.set(key, unsub);
     return () => {
-      this.handlers.get(type)?.delete(handler as EventInterceptor<InterceptableEvent>);
+      this.disposers.delete(key);
+      unsub();
     };
   }
 
   off<T extends InterceptableEvent>(type: string, handler: EventInterceptor<T>): void {
-    this.handlers.get(type)?.delete(handler as EventInterceptor<InterceptableEvent>);
-  }
-
-  /** Handlers for a given event type in registration order. */
-  getHandlers(type: string): EventInterceptor<InterceptableEvent>[] {
-    const set = this.handlers.get(type);
-    return set ? Array.from(set) : [];
+    void type;
+    const key = handler as EventInterceptor<InterceptableEvent>;
+    const unsub = this.disposers.get(key);
+    if (unsub) {
+      this.disposers.delete(key);
+      unsub();
+    }
   }
 }
 
@@ -72,33 +70,32 @@ class DefaultExtensionEventBus implements ExtensionEventBus {
 // ============================================================================
 
 class DefaultExtensionUI implements ExtensionUI {
-  private subscribers = new Map<string, Set<(data: unknown) => void>>();
   /** Retained status state so late subscribers can reconcile (e.g. after bootstrap). */
   private statusMap = new Map<string, string>();
   /** status key → owning extension id, so a disabled extension's status can be removed. */
   private statusOwners = new Map<string, string>();
 
+  constructor(private readonly bus: AgentEventBus | null) {}
+
+  /**
+   * Publish an `extension:ui` observer event on the agent's scoped bus (the
+   * session `extension-ui` channel projection consumes it). The internal
+   * pub/sub registry is gone — the bus is the single mechanism.
+   */
   notify(type: string, data: unknown): void {
-    const handlers = this.subscribers.get(type);
-    if (!handlers) return;
-    for (const handler of handlers) {
-      try {
-        handler(data);
-      } catch {
-        // Silently handle subscriber errors
-      }
-    }
+    const payload = (typeof data === "object" && data !== null ? data : { data }) as Record<string, unknown>;
+    this.bus?.emit("extension:ui", { type, ...payload } as never);
   }
 
+  /**
+   * Subscribe to one `extension:ui` notification type via the bus (facade over
+   * `extension:ui` events; kept so `ctx.ui.subscribe` keeps its shape).
+   */
   subscribe<T = unknown>(type: string, handler: (data: T) => void): () => void {
-    if (!this.subscribers.has(type)) {
-      this.subscribers.set(type, new Set());
-    }
-    this.subscribers.get(type)!.add(handler as (data: unknown) => void);
-
-    return () => {
-      this.subscribers.get(type)?.delete(handler as (data: unknown) => void);
-    };
+    if (!this.bus) return () => {};
+    return this.bus.on("extension:ui", (event) => {
+      if (event.payload.type === type) handler(event.payload as unknown as T);
+    });
   }
 
   setStatus(key: string, text: string): void {
@@ -175,6 +172,11 @@ export interface ExtensionRunnerOptions {
    */
   emitEvent?: EmitAgentTelemetryFn;
   /**
+   * Scoped unified event bus backing extension interception. Defaults to a
+   * standalone bus for hosts that build an {@link ExtensionRunner} without an agent.
+   */
+  eventBus?: AgentEventBus;
+  /**
    * Optional agent log to converge extension logging into. When provided,
    * `ctx.logger` and turn-context provider failures are written as structured
    * `hooks` entries instead of raw console output (console stays as a fallback
@@ -198,14 +200,15 @@ export class ExtensionRunner {
    * unsubscribes the provider). Cleared when the extension is re-enabled.
    */
   private disabledExtensionNotices = new Map<string, string>();
-  private eventBus: DefaultExtensionEventBus;
+  private eventBus: BusExtensionEventBus;
   private ui: DefaultExtensionUI;
   private options: ExtensionRunnerOptions;
 
   constructor(options: ExtensionRunnerOptions) {
     this.options = options;
-    this.eventBus = new DefaultExtensionEventBus();
-    this.ui = new DefaultExtensionUI();
+    const bus = options.eventBus ?? createAgentEventBus();
+    this.eventBus = new BusExtensionEventBus(bus);
+    this.ui = new DefaultExtensionUI(bus);
   }
 
   getEventBus(): ExtensionEventBus {
@@ -233,26 +236,34 @@ export class ExtensionRunner {
 
   /**
    * Emit `session:start` to registered interceptors (per-agent ExtensionEventBus).
-   * Distinct from the AgentTelemetryBus telemetry `session:start` — this one is
-   * interceptable by extensions.
+   * Distinct from the telemetry `session:start` emitted via the unified bus —
+   * this one is interceptable by extensions.
    */
   emitSessionStart(cwd: string, sessionId: string): void {
-    void this.eventBus.emit({
-      type: "session:start",
-      payload: { cwd, sessionId },
-      defaultReturn: undefined,
-    });
+    // Fire-and-forget interception: interceptor errors must not surface as
+    // unhandled rejections or break session bootstrap.
+    this.eventBus
+      .emit({
+        type: "session:start",
+        payload: { cwd, sessionId },
+        defaultReturn: undefined,
+      })
+      .catch(() => {});
   }
 
   /**
    * Emit `session:shutdown` to registered interceptors before teardown.
    */
   emitSessionShutdown(sessionId: string): void {
-    void this.eventBus.emit({
-      type: "session:shutdown",
-      payload: { sessionId },
-      defaultReturn: undefined,
-    });
+    // Fire-and-forget interception: interceptor errors must not surface as
+    // unhandled rejections or break teardown.
+    this.eventBus
+      .emit({
+        type: "session:shutdown",
+        payload: { sessionId },
+        defaultReturn: undefined,
+      })
+      .catch(() => {});
   }
 
   getTools(): ExtensionToolDefinition[] {
@@ -272,15 +283,14 @@ export class ExtensionRunner {
    * registered context providers. Returns per-extension turn-context sections.
    */
   async collectBeforeAgentStart(prompt: string, sessionId: string): Promise<ExtensionPromptAppends> {
-    const handlers = this.eventBus.getHandlers("before_agent_start");
-    for (const handler of handlers) {
-      const event: BeforeAgentStartEvent = {
-        type: "before_agent_start",
-        payload: { prompt, sessionId },
-        defaultReturn: undefined,
-      };
-      await handler(event);
-    }
+    // Dispatch through intercept (shared mutable event, ordered, awaited);
+    // handlers that append turn context do so on the event without cancelling.
+    const event: BeforeAgentStartEvent = {
+      type: "before_agent_start",
+      payload: { prompt, sessionId },
+      defaultReturn: undefined,
+    };
+    await this.eventBus.emit(event);
 
     // Each enabled extension with content becomes its own section (kind = id).
     const turnContextSections: ExtensionTurnContextSection[] = [];

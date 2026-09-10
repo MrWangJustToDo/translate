@@ -24,6 +24,7 @@ import {
   buildPlanRetroSteerMessage,
 } from "../agent/plan/plan-prompts.js";
 import { SummaryStreamHub } from "../agent/summary-stream/summary-stream-hub.js";
+import { registerStreamingEventBus } from "../agent/tools/util/streaming-callback.js";
 import { getCurrentDate, getGitInfo } from "../agent/turn-context/env-context.js";
 import {
   formatInstructionContextSection,
@@ -33,7 +34,6 @@ import {
   type InstructionContextState,
 } from "../agent/turn-context/instruction-context.js";
 import { type TurnContextSection } from "../agent/turn-context/turn-context-message.js";
-import { Emitter } from "../utils/emitter.js";
 import { generateId } from "../utils/generate-id.js";
 
 import { AgentConfigSchema } from "./agent-types.js";
@@ -73,7 +73,7 @@ import { UsageTracker } from "./telemetry/usage-tracker.js";
 
 import type { AgentManager } from "./agent-manager.js";
 import type { AgentConfig, AgentStatus, RunFinalizeReason } from "./agent-types.js";
-import type { AgentEvent, AgentEventType } from "./telemetry/agent-telemetry-bus.js";
+import type { AgentEvent, AgentEventBus } from "../agent/agent-event-bus";
 import type { AgentLog } from "../agent/agent-log";
 import type { CodeModeExtensionConfig } from "../agent/code-mode";
 import type { CompactionConfig, CompactionConfigInput } from "../agent/compaction/types.js";
@@ -103,7 +103,9 @@ import type { TextAdapterConfig } from "../models/adapter/adapter-factory.js";
 import type { ModelStyle } from "../models/config/model-config.js";
 import type { ModelInfo } from "../models/types.js";
 import type { AgentEventPayloadMap } from "../runtime-types/agent-event-payloads.js";
+import type { AgentEventType } from "../runtime-types/agent-events.js";
 import type { AgentRetryState } from "../runtime-types/agent-retry.js";
+import type { AgentL1State, AgentMode } from "../runtime-types/session-payloads.js";
 
 // ============================================================================
 // Config
@@ -112,19 +114,7 @@ import type { AgentRetryState } from "../runtime-types/agent-retry.js";
 /** When the turn context payload hasn't changed, re-admit every N messages to keep context fresh. */
 export type { RunFinalizeReason } from "./agent-types.js";
 
-/** Active agent mode — mutually exclusive modes for the agent. */
-export type AgentMode = "normal" | "auto" | "plan";
-
-/** L1 runtime status surface projected to AgentSession `state` channel. */
-export interface AgentL1State {
-  status: AgentStatus;
-  /** Agent display name (lets remote clients track renames via the state channel). */
-  name: string;
-  error: string;
-  pendingApprovalCount: number;
-  /** Present while a recoverable LLM failure is being retried (cleared once the stream recovers). */
-  retry?: AgentRetryState | null;
-}
+export type { AgentL1State, AgentMode } from "../runtime-types/session-payloads.js";
 
 export type ManagedAgentConfig<T = ManagedAgent> = AgentConfig & {
   id?: string;
@@ -206,7 +196,7 @@ export type ManagedAgentConfig<T = ManagedAgent> = AgentConfig & {
 /** Subagent preview / non-useChat UI channel (TanStack StreamProcessor). */
 export type AgentUIChannelRef = Pick<
   AgentUIChannel,
-  "getMessages" | "subscribe" | "subscribeCustomEvents" | "subscribeApprovalRequests"
+  "getMessages" | "subscribeCustomEvents" | "subscribeApprovalRequests"
 >;
 
 // ============================================================================
@@ -245,11 +235,6 @@ export class ManagedAgent {
   private pendingApprovalCount: number;
   /** Live LLM retry visibility (set by stream recovery; cleared when the stream recovers). */
   private retryInfo: AgentRetryState | null = null;
-  private readonly stateEvents: Emitter<{
-    change: AgentL1State;
-    /** Fired when {@link setUIChannel} attaches/clears the UI channel. */
-    ui: AgentUIChannel | undefined;
-  }>;
 
   // ============================================================================
   // Composed services / controllers
@@ -327,6 +312,8 @@ export class ManagedAgent {
   private chatController?: AgentChatController;
   /** Set by AgentManager to route events to listeners. */
   dispatchEvent?: (event: AgentEvent) => void;
+  /** Scoped unified event bus for this agent (set by the factory). */
+  private eventBus?: AgentEventBus;
   /** Owning manager — set when registered via {@link AgentManager.createManagedAgent}. */
   manager?: AgentManager;
   modelInfo: ModelInfo | null;
@@ -447,10 +434,6 @@ export class ManagedAgent {
     this.currentStatus = "idle";
     this.error = "";
     this.pendingApprovalCount = 0;
-    this.stateEvents = new Emitter<{
-      change: AgentL1State;
-      ui: AgentUIChannel | undefined;
-    }>();
 
     // ====================================================================================
     // (Tools / registries / extensions init moved into ExtensionRegistryService)
@@ -625,26 +608,11 @@ export class ManagedAgent {
     };
   }
 
-  /**
-   * Typed domain events for this agent:
-   * - `change` — L1 status/error/pendingApproval (fires current snapshot on subscribe)
-   * - `ui` — UI channel attach/clear
-   *
-   * Hosts should prefer AgentSession channels.
-   */
-  on<K extends "change" | "ui">(
-    type: K,
-    listener: (payload: K extends "change" ? AgentL1State : AgentUIChannel | undefined) => void
-  ): () => void {
-    const unsub = this.stateEvents.on(type, listener as (payload: AgentL1State | AgentUIChannel | undefined) => void);
-    if (type === "change") {
-      (listener as (payload: AgentL1State) => void)(this.getL1State());
-    }
-    return unsub;
-  }
-
   private emitStateChange(): void {
-    this.stateEvents.emit("change", this.getL1State());
+    // L1 state and mode flow exclusively through the scoped bus (`agent:state`
+    // retained, `session:mode` projected) — see unified-agent-event-bus.
+    this.eventBus?.emit("agent:state", this.getL1State());
+    this.eventBus?.emit("session:mode", this.modeState());
   }
 
   emitEvent<T extends AgentEventType>(
@@ -653,6 +621,44 @@ export class ManagedAgent {
     options?: { parentId?: string; agentId?: string }
   ): void {
     emitAgentTelemetry(this, type, payload, options);
+  }
+
+  /**
+   * Attach this agent's scoped unified event bus and propagate it to owned
+   * domain objects (session channel projections + retained values).
+   * @internal Wired by `agent-factory` during construction.
+   */
+  setEventBus(bus: AgentEventBus): void {
+    this.eventBus = bus;
+    registerStreamingEventBus(this.id, bus);
+    this.usage.setEventBus(bus);
+    this.summaryStreams.setEventBus(bus);
+    this.planMode.setEventBus(bus);
+    this.todoManager?.setEventBus(bus);
+    this.chatController?.setEventBus(bus);
+    bus.retain("agent:state", () => this.getL1State());
+    bus.retain("session:mode", () => this.modeState());
+    bus.retain("session:extensions", () => ({ extensions: this.extensionRunner?.getExtensionInfos() ?? [] }));
+    bus.retain("session:mcp", () => ({ servers: this.getMcpManager()?.getServerStatuses() ?? [] }));
+    // Route telemetry through this agent's scoped bus (up-flows to the root
+    // observer / Event→Log bridge) instead of the process-wide root bus.
+    this.dispatchEvent = (event) => {
+      bus.emit(event.type as never, event.payload as never, {
+        agentId: event.agentId,
+        ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
+        ...(event.sessionId !== undefined ? { sessionId: event.sessionId } : {}),
+      });
+    };
+  }
+
+  /** @internal Scoped unified event bus (undefined before factory wiring). */
+  getEventBus(): AgentEventBus | undefined {
+    return this.eventBus;
+  }
+
+  /** Derived mode projection payload (plan phase + auto mode). */
+  private modeState(): { mode: AgentMode; autoMode: boolean } {
+    return { mode: this.getAgentMode(), autoMode: this.isAutoModeEnabled() };
   }
 
   getSessionData(): SessionData | null {
@@ -1354,6 +1360,7 @@ export class ManagedAgent {
   /** Create or replace the core-owned main chat session (StreamProcessor + run loop). */
   initChat(manager: AgentManager, initialMessages?: TanStackUIMessage[]): AgentChatController {
     this.chatController = new AgentChatController(this, manager, initialMessages);
+    if (this.eventBus) this.chatController.setEventBus(this.eventBus);
     this.resetSessionSyncTracker(initialMessages);
     return this.chatController;
   }
@@ -1441,6 +1448,12 @@ export class ManagedAgent {
     this.approvalRequestUnsub = undefined;
     this.uiChannel = ui;
     if (ui) {
+      // Every channel — root chat or subagent preview — must project its
+      // `session:messages` onto the agent's scoped bus (the single change
+      // mechanism since the domain Emitter was removed). Without this, a
+      // subagent preview channel created by `ensureUIChannel` never reaches
+      // its AgentSession `messages` channel.
+      if (this.eventBus) ui.setEventBus(this.eventBus);
       this.approvalRequestUnsub = ui.subscribeApprovalRequests((request) => {
         if (!request.approvalId || !request.toolCallId) return;
         this.approvals.upsert({
@@ -1450,7 +1463,6 @@ export class ManagedAgent {
         });
       });
     }
-    this.stateEvents.emit("ui", ui);
   }
 }
 

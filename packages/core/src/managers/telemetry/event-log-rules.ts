@@ -2,8 +2,9 @@
  * Default event → AgentLog mapping for {@link bridgeTelemetryToAgentLog}.
  */
 
-import type { AgentEvent, AgentEventType } from "./agent-telemetry-bus.js";
+import type { AgentEvent, AgentEventType } from "../../agent/agent-event-bus";
 import type { LogCategory, LogLevel } from "../../agent/agent-log/types.js";
+import type { AgentEventPayloadMap } from "../../runtime-types/agent-event-payloads.js";
 
 /** Read payload fields for logging formatters. */
 function p(event: AgentEvent): Record<string, unknown> {
@@ -16,7 +17,12 @@ export interface EventLogRule {
   formatMessage: (event: AgentEvent) => string;
 }
 
-export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | false> = {
+/**
+ * Telemetry-only mapping. Typed against the payload map so every telemetry
+ * event still requires an entry (compile-checked) while session-projection
+ * events (e.g. `agent:state`) stay out of the log stream.
+ */
+const TELEMETRY_EVENT_LOG_RULES: Record<keyof AgentEventPayloadMap, EventLogRule | false> = {
   // ============================================================================
   // Session lifecycle
   // ============================================================================
@@ -326,3 +332,6 @@ export const DEFAULT_EVENT_LOG_RULES: Record<AgentEventType, EventLogRule | fals
     formatMessage: () => "Plan mode off",
   },
 };
+
+/** Default event → log rule lookup (session-projection events are intentionally absent). */
+export const DEFAULT_EVENT_LOG_RULES: Partial<Record<AgentEventType, EventLogRule | false>> = TELEMETRY_EVENT_LOG_RULES;

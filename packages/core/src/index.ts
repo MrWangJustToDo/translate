@@ -67,11 +67,7 @@ export type {
 export { ManagedAgent, type ManagedAgentConfig, type AgentMode } from "./managers/managed-agent.js";
 export { isActiveStatus } from "./runtime-types/agent-status.js";
 export type { AgentStatus } from "./runtime-types/agent-status.js";
-export type {
-  QueuedMessageContent,
-  QueuedMessagesSnapshot,
-  QueueUpdateListener,
-} from "./managers/controllers/agent-chat-controller.js";
+export type { QueuedMessageContent, QueuedMessagesSnapshot } from "./managers/controllers/agent-chat-controller.js";
 export type { PlanModePhase, PlanModeState, BeginPlanExecutionResult } from "./agent/plan/plan-mode-controller.js";
 export type { QueueMode } from "./agent/queue/pending-message-queue.js";
 
@@ -93,7 +89,6 @@ export type { DailyUsageBucket, ModelUsageTotal, UsageHistoryResult } from "./ag
 export {
   AGENT_SESSION_CHANNELS,
   DEFAULT_AGENT_SESSION_CHANNELS,
-  DEFAULT_SESSION_LIFECYCLE_EVENTS,
   createLocalAgentSession,
   createLocalAgentSessionHost,
   sessionForSubagent,

@@ -1,6 +1,9 @@
-import type { AgentEvent, AgentEventType } from "./agent-telemetry-bus.js";
+import type { AgentEvent } from "../../agent/agent-event-bus";
 import type { AgentEventPayloadMap } from "../../runtime-types/agent-event-payloads.js";
 import type { EmitAgentTelemetryFn } from "../../runtime-types/agent-events.js";
+
+/** Telemetry event names (payload-map keys); excludes session-projection events. */
+type TelemetryEventType = keyof AgentEventPayloadMap;
 
 export type { EmitAgentTelemetryFn } from "../../runtime-types/agent-events.js";
 
@@ -28,7 +31,7 @@ export function createEmitTelemetryFn(emitter: AgentTelemetryEmitter): EmitAgent
  * Unified telemetry emission helper.
  * Injects `ts` and `sessionId` when session data is available.
  */
-export function emitAgentTelemetry<T extends AgentEventType>(
+export function emitAgentTelemetry<T extends TelemetryEventType>(
   emitter: AgentTelemetryEmitter,
   type: T,
   payload?: AgentEventPayloadMap[T],

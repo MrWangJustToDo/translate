@@ -25,22 +25,16 @@ import {
 import { analyzeCommand, createAnalysisContext } from "../../agent/tools/command-safety/command-analyzer.js";
 import { evaluateCommandApproval } from "../../agent/tools/command-safety/command-approval-policy.js";
 import { AgentUIChannel } from "../../agent/ui-channel.js";
-import { Emitter } from "../../utils/emitter.js";
 
+import type { AgentEventBus } from "../../agent/agent-event-bus";
+import type { QueuedMessageContent, QueuedMessagesSnapshot } from "../../runtime-types/session-payloads.js";
 import type { AgentManager } from "../agent-manager.js";
 import type { ManagedAgent } from "../managed-agent.js";
 import type { ContentPart, ToolCallPart, UIMessage } from "@tanstack/ai";
 
 const MAX_TOOL_PHASE_ITERATIONS = 40;
 
-export type QueuedMessageContent = string | ContentPart[];
-
-export interface QueuedMessagesSnapshot {
-  steer: QueuedMessageContent[];
-  followUp: QueuedMessageContent[];
-}
-
-export type QueueUpdateListener = (snapshot: QueuedMessagesSnapshot) => void;
+export type { QueuedMessageContent, QueuedMessagesSnapshot } from "../../runtime-types/session-payloads.js";
 
 /**
  * Core-owned main chat session: StreamProcessor + explicit tool-phase continuation.
@@ -59,7 +53,16 @@ export class AgentChatController {
 
   private readonly steeringQueue = new PendingMessageQueue<QueuedMessageContent>();
   private readonly followUpQueue = new PendingMessageQueue<QueuedMessageContent>();
-  private readonly queueEvents = new Emitter<{ change: QueuedMessagesSnapshot }>();
+
+  /** Unified event bus for the owning agent (session `queues` projection). */
+  private eventBus?: AgentEventBus;
+
+  /** @internal Attach the agent's scoped unified event bus. */
+  setEventBus(bus: AgentEventBus): void {
+    this.eventBus = bus;
+    this.channel.setEventBus(bus);
+    bus.retain("session:queues", () => this.getQueuedMessages());
+  }
 
   constructor(
     private readonly managed: ManagedAgent,
@@ -76,10 +79,6 @@ export class AgentChatController {
 
   getMessages(): UIMessage[] {
     return this.channel.getMessages();
-  }
-
-  subscribeMessages(listener: (messages: UIMessage[]) => void): () => void {
-    return this.channel.subscribe(listener);
   }
 
   setMessages(messages: UIMessage[]): void {
@@ -142,16 +141,6 @@ export class AgentChatController {
       steer: [...this.steeringQueue.peekAll()],
       followUp: [...this.followUpQueue.peekAll()],
     };
-  }
-
-  /**
-   * Subscribe to typed queue events (`change` carries steer/followUp snapshot).
-   * Fires the current snapshot immediately on subscribe.
-   */
-  on(type: "change", listener: (snapshot: QueuedMessagesSnapshot) => void): () => void {
-    const unsub = this.queueEvents.on(type, listener);
-    listener(this.getQueuedMessages());
-    return unsub;
   }
 
   clearQueuedMessages(): QueuedMessagesSnapshot {
@@ -259,7 +248,10 @@ export class AgentChatController {
   }
 
   private notifyQueueListeners(): void {
-    this.queueEvents.emit("change", this.getQueuedMessages());
+    const snapshot = this.getQueuedMessages();
+    // Single notification path: the session `queues` projection on the unified
+    // bus (the domain Emitter was removed — see unified-agent-event-bus).
+    this.eventBus?.emit("session:queues", snapshot);
   }
 
   private enqueueRun(): Promise<void> {

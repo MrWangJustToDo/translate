@@ -1,24 +1,23 @@
 /**
- * Streaming Callback — agent-scoped multicast bridge for tool stdout/stderr.
+ * Streaming Callback — bus-scoped multicast bridge for tool stdout/stderr.
+ *
+ * The former per-agent callback registry is gone: streaming output is emitted
+ * as `tool:chunk` / `tool:clear` observer events on the agent's scoped unified
+ * bus (registered per agent in `ManagedAgent.setEventBus`). Hosts consume them
+ * via the AgentSession `tool` channel; in-process callers subscribe with
+ * `bus.on("tool:chunk" / "tool:clear")`.
  */
 
 // ============================================================================
 // Types
 // ============================================================================
 
+import type { AgentEventBus } from "../../agent-event-bus";
+
 export interface StreamingChunk {
   toolCallId: string;
   type: "stdout" | "stderr";
   chunk: string;
-}
-
-export type StreamingCallback = (data: StreamingChunk) => void;
-
-export type StreamingClearCallback = (toolCallId: string) => void;
-
-export interface StreamingSubscribeOptions {
-  /** Only receive chunks/clears emitted for this agent. */
-  agentId: string;
 }
 
 export interface StreamingEmitOptions {
@@ -30,44 +29,24 @@ export interface StreamingEmitOptions {
 // State
 // ============================================================================
 
-const scopedChunkCallbacks = new Map<string, Set<StreamingCallback>>();
-const scopedClearCallbacks = new Map<string, Set<StreamingClearCallback>>();
-
-function addScoped<T>(map: Map<string, Set<T>>, agentId: string, callback: T): () => void {
-  let set = map.get(agentId);
-  if (!set) {
-    set = new Set();
-    map.set(agentId, set);
-  }
-  set.add(callback);
-  return () => {
-    set!.delete(callback);
-    if (set!.size === 0) map.delete(agentId);
-  };
-}
+/** Agent id → scoped unified event bus (for the `tool` channel projection). */
+const agentEventBuses = new Map<string, AgentEventBus>();
 
 /**
- * @internal Package-internal / `dev.ts` validates. Hosts use AgentSession `tool` channel.
+ * @internal Register an agent's scoped unified event bus so streaming output is
+ * emitted as `tool:chunk` / `tool:clear` observer events.
  */
-export function subscribeStreamingCallback(
-  callback: StreamingCallback,
-  options: StreamingSubscribeOptions
-): () => void {
-  return addScoped(scopedChunkCallbacks, options.agentId, callback);
+export function registerStreamingEventBus(agentId: string, bus: AgentEventBus): void {
+  agentEventBuses.set(agentId, bus);
+}
+
+/** @internal Drop the registered bus for an agent (teardown / tests). */
+export function unregisterStreamingEventBus(agentId: string): void {
+  agentEventBuses.delete(agentId);
 }
 
 /**
- * @internal Package-internal / `dev.ts` validates. Hosts use AgentSession `tool` channel.
- */
-export function subscribeStreamingClearCallback(
-  callback: StreamingClearCallback,
-  options: StreamingSubscribeOptions
-): () => void {
-  return addScoped(scopedClearCallbacks, options.agentId, callback);
-}
-
-/**
- * Emit a streaming chunk to subscribers of {@link StreamingEmitOptions.agentId}.
+ * Emit a streaming chunk to the agent's scoped bus (`tool` channel projection).
  */
 export function emitStreamingChunk(
   toolCallId: string,
@@ -75,46 +54,20 @@ export function emitStreamingChunk(
   chunk: string,
   options: StreamingEmitOptions
 ): void {
-  const set = scopedChunkCallbacks.get(options.agentId);
-  if (!set) return;
-  const data: StreamingChunk = { toolCallId, type, chunk };
-  for (const callback of set) {
-    callback(data);
-  }
+  agentEventBuses.get(options.agentId)?.emit("tool:chunk", {
+    kind: "chunk",
+    chunk: { toolCallId, type, chunk },
+  });
 }
 
 /**
  * Clear streamed output for a tool call (e.g. before a subagent retry).
  */
 export function clearStreamingOutput(toolCallId: string, options: StreamingEmitOptions): void {
-  const set = scopedClearCallbacks.get(options.agentId);
-  if (!set) return;
-  for (const callback of set) {
-    callback(toolCallId);
-  }
+  agentEventBuses.get(options.agentId)?.emit("tool:clear", { kind: "clear", toolCallId });
 }
 
-/** Exposed for validation scripts. */
-export function getStreamingSubscriberCounts(): {
-  chunk: number;
-  clear: number;
-  scopedChunkAgents: number;
-  scopedClearAgents: number;
-} {
-  let chunk = 0;
-  for (const set of scopedChunkCallbacks.values()) chunk += set.size;
-  let clear = 0;
-  for (const set of scopedClearCallbacks.values()) clear += set.size;
-  return {
-    chunk,
-    clear,
-    scopedChunkAgents: scopedChunkCallbacks.size,
-    scopedClearAgents: scopedClearCallbacks.size,
-  };
-}
-
-/** Reset all subscribers (validation only). */
+/** Reset registered buses (validation only). */
 export function resetStreamingCallbacksForTests(): void {
-  scopedChunkCallbacks.clear();
-  scopedClearCallbacks.clear();
+  agentEventBuses.clear();
 }

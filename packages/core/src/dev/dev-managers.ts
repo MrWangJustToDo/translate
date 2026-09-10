@@ -9,7 +9,21 @@ export {
   isTerminalStatus,
   resolveFinishStatus,
 } from "../runtime-types/agent-status.js";
-export { AgentTelemetryBus } from "../managers/telemetry/agent-telemetry-bus.js";
+export {
+  DefaultAgentEventBus,
+  createAgentEventBus,
+  AGENT_EVENT_META,
+  INTERCEPTOR_EVENT_PATTERNS,
+} from "../agent/agent-event-bus/index.js";
+export type {
+  AgentEvent,
+  AgentEventBus,
+  AgentEventListener,
+  AgentEventMeta,
+  AgentEvents,
+  AgentEventType,
+  AgentEventPayloadMap,
+} from "../agent/agent-event-bus/index.js";
 export { bridgeTelemetryToAgentLog, summarizePayload } from "../managers/telemetry/event-log-bridge.js";
 export { emitAgentTelemetry } from "../managers/telemetry/emit-agent-telemetry.js";
 export { UsageTracker } from "../managers/telemetry/usage-tracker.js";
