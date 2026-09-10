@@ -435,7 +435,7 @@ Hosts should prefer `AgentSession` (`getSnapshot` / `dispatch` / `subscribe`) ov
 
 **Host-owned session plane:** hosts construct the `AgentSessionHost` (local manager, or remote HTTP when `--remote-session`) and inject it into `createAgentFromConfig`; the UI layer never imports core runtime singletons (enforced by app's `validate:core-imports`). Remote client features: SSE auto-reconnect with exponential backoff, server heartbeat ping + client watchdog, remount seeds (`/tool-buffers`, `/summary-streams`) so in-flight tool output and summary streams survive reconnects; state channel carries `name`, so commands sync without full-snapshot refetch.
 
-Internal domain updates use a typed `Emitter` (todos, usage, state, queues, plan, messages). Hosts subscribe via `AgentSession` channels projected from those Emitters; `lifecycle` projects a filtered `AgentTelemetryBus` set. The former structured `log` channel was **removed** — log observability is provided exclusively by the persisted JSONL file sink (`.agents/logs/<sessionId>/agent.log`). Domain classes expose `.on(...)` for internal Session projection — not a parallel host observation API.
+All domain updates route through a single unified `AgentEventBus` (`agent/agent-event-bus`) — one type registry (`AgentEvents` + `AGENT_EVENT_META`), two dispatch modes: observer `emit` (sync, fire-and-forget, retained values) and interceptor `intercept` (async, ordered, cancel short-circuit; `tool:before:*` patterns). `AgentManager.of(agentId, parentId?)` mints per-agent scoped buses (subagent events up-flow to parent/root). `AgentSession` subscribes the scoped bus once and projects every observer event to its channel via `AGENT_EVENT_META[type].channel`, replaying retained values per subscriber. The former structured `log` channel was **removed** — log observability is provided exclusively by the persisted JSONL file sink (`.agents/logs/<sessionId>/agent.log`).
 
 **TODO:** message channel currently delivers full `UIMessage[]` (incremental/patch later).
 
@@ -492,7 +492,7 @@ registerModelProvider(await createRemoteProvider("http://localhost:3100"));
 
 ## Agent Event System
 
-`AgentManager` owns an `AgentTelemetryBus` for lifecycle telemetry. Emit via `emitAgentTelemetry()` / `ManagedAgent.emitEvent()`; subscribe with `agentManager.on(type, listener)`.
+`AgentManager` owns the root unified `AgentEventBus` for lifecycle telemetry. Emit via `emitAgentTelemetry()` / `ManagedAgent.emitEvent()` (both route onto the agent's scoped bus, up-flowing to root); subscribe with `agentManager.on(type, listener)` or `bus.on("*")`.
 
 | Event | When emitted |
 |-------|----------------|
@@ -514,7 +514,7 @@ registerModelProvider(await createRemoteProvider("http://localhost:3100"));
 
 **Vision note:** On OpenAI-compatible Chat Completions, multimodal tool results are lifted to a synthetic user `image_url` message (`liftToolMediaForChatCompletions`) so base64 is not stringified into `role: "tool"`. Anthropic keeps native multimodal `tool_result` parts. Official DeepSeek Chat Completions may still reject `image_url` (text-only schema); capability sanitization strips unsupported `image` / `audio` / `video` / `document` parts on the wire and retries once — use a vision-capable provider for real media understanding. Session/UI history always keeps structured image parts (and `.agents/media` binary files); wire stripping must not change persisted message shape.
 
-**Event → Log bridge:** `bridgeTelemetryToAgentLog()` in `AgentManager` maps telemetry events to `AgentLog` entries — each stamped with the originating event type (`event`) and scoped to the in-flight run (`run`). Policy lives in `managers/telemetry/event-log-bridge.ts` (`DEFAULT_EVENT_LOG_RULES`); override per event type with `EventLogPolicy`. Emit sites should not duplicate lifecycle logs covered by events. The sink persists every entry to `.agents/logs/<sessionId>/agent.log` (size-rotated).
+**Event → Log bridge:** `bridgeTelemetryToAgentLog()` in `AgentManager` subscribes the unified bus `"*"` (its only wildcard consumer) and maps telemetry events to `AgentLog` entries — each stamped with the originating event type (`event`) and scoped to the in-flight run (`run`). Policy lives in `managers/telemetry/event-log-bridge.ts` (`DEFAULT_EVENT_LOG_RULES`); override per event type with `EventLogPolicy`. Emit sites should not duplicate lifecycle logs covered by events. The sink persists every entry to `.agents/logs/<sessionId>/agent.log` (size-rotated).
 
 ## Prompt Cache (prefix)
 
@@ -893,7 +893,7 @@ packages/
 │   ├── managers/                      # AgentManager, ManagedAgent, RunCoordinator, services/, middleware
 │   │   ├── run-coordinator.ts          # Run lifecycle flags/timing (prepare/run/finalize)
 │   │   ├── services/                   # Session / memory / compaction / extension-registry / usage-history services
-│   │   └── telemetry/                  # AgentTelemetryBus + Event→Log bridge (event-log-bridge.ts)
+│   │   └── telemetry/                  # Event→Log bridge (event-log-bridge.ts); bus lives in agent/agent-event-bus
 │   ├── models/                        # Model config (model-config.ts), adapters, models.dev lookup
 │   ├── runtime-types/                 # Shared status / event / usage types (no manager deps)
 │   ├── utils/                         # Cross-cutting helpers (Emitter, generateId)

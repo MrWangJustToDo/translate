@@ -13,7 +13,7 @@ For monorepo-wide context see [AGENTS.md](../../AGENTS.md). For public exports s
 | CoreEnv abstraction                       | **Done**         | `registerCoreEnv` / `getEnv`                                                                                            |
 | Agent factory & manager                   | **Done**         | Root vs subagent split                                                                                                  |
 | TanStack agent loop                       | **Done**         | `AgentRunner` + middleware stack                                                                                        |
-| Event protocol + Event→Log bridge         | **Done**         | `AgentTelemetryBus`, `managers/telemetry/event-log-bridge.ts`                                                                            |
+| Event protocol + Event→Log bridge         | **Done**         | Unified `AgentEventBus` (one bus, emit/intercept, retain/scope); Event→Log is its only `"*"` consumer                       |
 | Model config (`openai` / `anthropic`)     | **Done**         | `resolveModelConfig`, `createTextAdapter`                                                                               |
 | Session persistence                       | **Done**         | Unified `persistSession`; save failures reject + emit `session:save-error`                                              |
 | Agent Session API                         | **Done**         | Snapshot/commands + Local/Remote Host; **app is Session-only** (no ManagedAgent in UI)                                  |
@@ -42,9 +42,9 @@ For monorepo-wide context see [AGENTS.md](../../AGENTS.md). For public exports s
                              │ getSnapshot / dispatch / subscribe
 ┌────────────────────────────▼────────────────────────────────────┐
 │ @my-agent/core                                                  │
-│  AgentSession ← Domain Emitters + filtered AgentTelemetryBus         │
+│  AgentSession ← AgentEventBus channel projection (AGENT_EVENT_META)  │
 │  AgentManager ──► ManagedAgent (run semantics unchanged)         │
-│  AgentTelemetryBus ──► Event→Log (lifecycle telemetry)               │
+│  AgentEventBus (root) ──► Event→Log (only "*" observer consumer)    │
 └────────────────────────────┬────────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────────┐
@@ -156,7 +156,7 @@ agent-manager.ts
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | `AgentLog`, `TodoManager`, `ManagedAgent` (UI channel attached before LLM runs)                                                                                                                                                                                                             |
 | 2    | `createTools()` → filesystem, grep, glob, tree, run_command, …                                                                                                                                                                                                                              |
-| 3    | `managed.dispatchEvent = emit` (routes to `AgentTelemetryBus`)                                                                                                                                                                                                                              |
+| 3    | `managed.dispatchEvent = emit` (routes to the agent-scoped `AgentEventBus`; up-flows to root)                                                                                                                                                                                                                              |
 | 4    | `loadAgentDoc()` → `setAgentDocContent` (AGENTS.md / CLAUDE.md)                                                                                                                                                                                                                             |
 | 5    | `todo`, `webfetch`, `websearch`, `ask_user` tools                                                                                                                                                                                                                                           |
 | 6    | `SkillRegistry.loadFromDirectories` → `list_skills`, `load_skill`, `task`                                                                                                                                                                                                                   |
@@ -168,22 +168,31 @@ agent-manager.ts
 
 **Subagent** (`parentId` set): inherits parent config via `spawnSubagent`; skips docs, skills, MCP, memory, extensions, session, and most root-only tools.
 
-### 2.3 Event infrastructure (manager construct time)
+### 2.3 Event infrastructure — the unified bus (manager construct time)
 
 ```
 AgentManager constructor
-  new AgentTelemetryBus()
-  bridgeTelemetryToAgentLog(bus, resolveLog)   // centralized lifecycle logging
+  rootEventBus = createAgentEventBus()            // single process-wide root
+  bridgeTelemetryToAgentLog(rootEventBus, resolveLog)  // only "*" observer consumer
+
+ManagedAgent.setEventBus(manager.of(agentId, parentId))  // per-agent scoped bus
+  agent:state / session:* retained providers registered here
+  telemetry dispatchEvent re-routed onto the scoped bus (up-flows to root)
 ```
 
-Observation is split into four layers (do not mix interception into the lifecycle bus):
+One registry (`AgentEvents` type map + `AGENT_EVENT_META`), two dispatch modes:
 
-| Layer            | Mechanism                                                                                                     | Role                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| L1 Control plane | `AgentStatusController` + L1 Emitter → Session `state`                                                        | status / error / pendingApproval                |
-| L2 Lifecycle bus | `AgentTelemetryBus` → Event→Log (+ Session `lifecycle` / `agentManager.on`)                                   | fire-and-forget notify                          |
-| L3 Data plane    | `AgentUIChannel` + tool-output registry → Session `messages` / `tool`; `SummaryStreamHub` → Session `summary` | UIMessages / tool stdout / task·compact summary |
-| L4 Interception  | `ExtensionEventBus` only                                                                                      | skip / transform tool args                      |
+| Mode         | Mechanism                                                                                     | Role                                    |
+| ------------ | --------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Observer     | `bus.emit` / `bus.on("name"| "*")` — sync, fire-and-forget, error-isolated; `retain` replays current value to late subscribers | state / messages / usage / lifecycle notifications |
+| Interceptor  | `bus.intercept` / `bus.onIntercept` — async, ordered, shared mutable event, cancel short-circuit, `tool:before:*` pattern keys | extension tool before/after/error hooks, `before_agent_start` |
+
+`AgentSession` subscribes the agent's scoped bus **once** and projects every
+observer event to a session channel declared in `AGENT_EVENT_META[type].channel`;
+per-subscriber reconcile replays retained channels (state/mode/mcp/…) so late
+subscribers see initial values without a snapshot refetch. `scope(id)` mints
+child buses — a subagent's events up-flow to its parent and the root, while
+siblings stay isolated.
 
 ### 2.4 Session bootstrap events (`session-bootstrap-events.ts`)
 
@@ -378,7 +387,7 @@ No manual user text is required; each `y` only approves one tool when several `r
 | **User approval**            | TanStack + app                                                     | Block destructive tools until user confirms |
 | **Extension deny/transform** | `extensions-middleware.ts` → `ExtensionEventBus` (`tool:before:*`) | Extension skip/transform before tool runs   |
 
-Lifecycle tool events (`agent:tool-start` / `agent:tool-end` / `agent:tool-error`) always emit on AgentTelemetryBus (L2), whether or not an extension runner is present. Extension bus traffic is L4 only.
+Lifecycle tool events (`agent:tool-start` / `agent:tool-end` / `agent:tool-error`) always emit on the agent's scoped `AgentEventBus` (observer mode), whether or not an extension runner is present. Extension interception (`tool:before:*` / `tool:after:*`) is interceptor mode on the same bus.
 
 ---
 
@@ -696,23 +705,28 @@ flushIndex → update memory.content for next session
 
 ### 8.1 Emission
 
+Every event — telemetry, domain state, streaming output, extension UI — is emitted on the agent's scoped `AgentEventBus` (the **single** event mechanism):
+
 ```typescript
-emitAgentTelemetry(emitter, type, { data }); // injects session_id
-managed.emitEvent(type, data);
+managed.emitEvent(type, data);            // scoped bus emit (observer) + envelope metadata
+emitAgentTelemetry(managed, type, data);  // envelope-construction helper (same bus)
+bus.emit("session:summary", payload);     // domain objects hold the scoped bus and emit
 ```
+
+Observer `emit` is synchronous fire-and-forget with per-listener error containment; interceptor `intercept` (`{ type, payload, defaultReturn }`) is async, ordered, shared-mutable, and can short-circuit. The Event→Log bridge is the single `"*"` observer on the root scope.
 
 ### 8.2 Observation layers (L1–L4)
 
-| Layer | Internal                                                                 | Host                                                                      |
-| ----- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| L1    | Status controller + ManagedAgent Emitter `change`                        | Session `state`                                                           |
-| L2    | `AgentTelemetryBus` (+ Event→Log)                                        | Session `lifecycle` (filtered); `agentManager.on` for cross-agent / `"*"` |
-| L3    | UIChannel Emitter `messages` + tool-output registry + `SummaryStreamHub` | Session `messages` / `tool` / `summary`                                   |
-| L4    | `ExtensionEventBus` / ExtensionUI                                        | Not part of AgentSession                                                  |
+| Layer | Event source (unified bus)                                                                      | Host surface                                                                       |
+| ----- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| L1    | `ManagedAgent.emitStateChange` → `agent:state` (retained) + `session:mode`                       | Session `state` / `mode` channels                                                  |
+| L2    | Telemetry envelope helpers → scoped bus (root `"*"` observer: Event→Log)                        | Session `lifecycle` channel (declarative projection)                               |
+| L3    | Domain objects emit declared observer events (todos/usage/plan/summary/messages/queues/tool)     | Session `messages`/`tool`/`summary`/`todos`/`usage`/`plan`/`queues`/`extensions`/`mcp` |
+| L4    | Extension interception (`tool:before:*` / `tool:after:*` / `tool:error:*` / `before_agent_start`) + `extension:ui` | Session `extension-ui` channel; host `ctx.ui` facade                        |
 
-**Host observation API:** `AgentSession` only (`createLocalAgentSession` / HTTP client) — `getSnapshot` / `dispatch` / `subscribe(channels)`. Domain classes expose typed `.on(...)` for Session projection and package-internal use; there is no parallel `ManagedAgent.observe()` facade.
+**Host observation API:** `AgentSession` only (`createLocalAgentSession` / HTTP client) — `getSnapshot` / `dispatch` / `subscribe(channels)`. There are **no** public domain `.on(...)` APIs: `AgentChatController.on("change")` and `ManagedAgent.on("change"|"ui")` were removed with the domain emitters, and the `AgentTelemetryBus` facade was deleted — `AgentEventBus` is the single mechanism.
 
-Internal domain updates use a typed `Emitter` (todos, usage, L1 state, queues, plan, UI messages). Session channels project from those emitters; `lifecycle` projects a filtered `AgentTelemetryBus` set. The former structured `log` session channel was removed — log observability is provided exclusively by the persisted JSONL file sink (`.agents/logs/{sessionId}/agent.log`).
+**Projection:** `local-agent-session` keeps one subscription per agent scope and routes events to channels via declared metadata (`AGENT_EVENT_META`); retained events (`state` / `mode` / `messages` / `usage` / `todos` / `plan` / `extensions` / `mcp` / `queues`) replay their current value to each new subscriber. The former structured `log` session channel was removed — log observability is provided exclusively by the persisted JSONL file sink (`.agents/logs/{sessionId}/agent.log`).
 
 **Messages channel:** Session snapshots always carry a full `UIMessage[]`; the `messages` channel delivers the same full array (JSON-patch / delta delivery is deferred). Wire projection for the model loop is cached by channel revision + last-message fingerprint (`WireProjectionCache`).
 
@@ -752,7 +766,7 @@ Task / compact summary text uses `ManagedAgent.summaryStreams` (`SummaryStreamHu
 
 ### 8.5 Extension interception (L4)
 
-`ExtensionEventBus` (`tool:before:*` / `tool:after:*` / `tool:error:*` / `before_agent_start`) is invoked from middleware and prepare-for-run. It does **not** replace AgentTelemetryBus. There is **no** `.agent-hooks` / hook-script path — customize via `.agents/extension` modules or programmatic `config.extensions`.
+Extension interception (`tool:before:*` / `tool:after:*` / `tool:error:*` / `before_agent_start`) is **interceptor mode on the same `AgentEventBus`** (invoked from middleware and prepare-for-run) — there is no separate interceptor bus. There is **no** `.agent-hooks` / hook-script path — customize via `.agents/extension` modules or programmatic `config.extensions`.
 
 The ExtensionEventBus also carries **session lifecycle events** (distinct from the L2 `session:start` telemetry): `session:start` (emitted at the end of `emitSessionBootstrapEvents`, payload `{ cwd, sessionId }`) and `session:shutdown` (emitted in `AgentManager.destroyAgent()` before `extensionRunner.destroyAll()`, so extensions can release resources first).
 
