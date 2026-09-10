@@ -17,6 +17,7 @@ import {
   type SessionSaveReason,
   type SessionSyncTracker,
 } from "../agent/persistence/session-sync-tracker.js";
+import { AGENT_LOG_DIR, type SessionData } from "../agent/persistence/types.js";
 import { PlanModeController } from "../agent/plan/plan-mode-controller.js";
 import {
   buildModeInactivePrompt,
@@ -91,7 +92,6 @@ import type { McpManager } from "../agent/mcp/manager.js";
 import type { MemoryExtensionConfig } from "../agent/memory";
 import type { MemoryManager } from "../agent/memory/memory-manager.js";
 import type { SessionStore } from "../agent/persistence/session-store.js";
-import type { SessionData } from "../agent/persistence/types.js";
 import type { BeginPlanExecutionResult, PlanModeState } from "../agent/plan/plan-mode-controller.js";
 import type { AgentRunner } from "../agent/runner/agent-runner.js";
 import type { SkillRegistry, SkillsExtensionConfig } from "../agent/skills";
@@ -133,6 +133,13 @@ export type ManagedAgentConfig<T = ManagedAgent> = AgentConfig & {
   skillDirs?: string[];
   compaction?: CompactionConfigInput;
   mcpConfigPath?: string;
+  /**
+   * Pre-resolved on-disk session id to adopt at bootstrap (before the session
+   * log sink attaches), so a reused/resumed session's id is fixed from the
+   * start. The full restore is still performed by the caller via
+   * {@link ManagedAgent.restoreSession}. Root agents only.
+   */
+  initialSessionId?: string;
   agentDocFilenames?: string[];
   agentDocLoadOverride?: boolean;
   /**
@@ -261,6 +268,8 @@ export class ManagedAgent {
 
   tools: ToolsRecord;
   log: AgentLog;
+  /** Detach handle for the active session log sink (lets a rebind dispose it). */
+  private detachLogSink: (() => void) | null = null;
   /** Extension / tool / integration registration domain (todo, MCP, skills, extensions). */
   readonly extensions: ExtensionRegistryService;
 
@@ -788,6 +797,22 @@ export class ManagedAgent {
 
   getLog(): AgentLog {
     return this.log;
+  }
+
+  /**
+   * Attach (or re-point) the session JSONL log sink to the current session id's
+   * directory. Called once the session id is fixed at bootstrap and again after
+   * a restore, so logs follow the reused/resumed session rather than the
+   * transient id allocated before restore. No-op for subagents (they write an
+   * independent file into the parent's dir via `spawnSubagent`).
+   */
+  bindSessionLogSink(): void {
+    if (this.parentId) return;
+    const sessionId = this.getSessionData()?.id ?? this.id;
+    const dir = `${AGENT_LOG_DIR}/${sessionId}`;
+    if (this.log.getFileSinkDir() === dir) return;
+    this.detachLogSink?.();
+    this.detachLogSink = this.log.attachFileSink({ dir });
   }
 
   setTodoManager(t: TodoManager): void {
@@ -1342,7 +1367,12 @@ export class ManagedAgent {
       throw new Error(`Session "${sessionId}" is already active in another live session and cannot be resumed here.`);
     }
     try {
-      return await restoreManagedSession(this, sessionId);
+      const session = await restoreManagedSession(this, sessionId);
+      // Re-point the log sink at the restored session's dir so a mid-session
+      // switch keeps logging to the session being viewed. A no-op at bootstrap
+      // (the sink was already bound to this id by `createManagedAgent`).
+      this.bindSessionLogSink();
+      return session;
     } catch (err) {
       // Roll back ownership so a failed restore (e.g. missing session) doesn't
       // leave a stale claim.

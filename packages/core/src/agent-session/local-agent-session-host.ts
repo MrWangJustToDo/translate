@@ -1,10 +1,14 @@
 /**
  * Local AgentSessionHost — wraps AgentManager + LocalAgentSession.
  *
- * Bootstrap resume (`continueSession` / `resumeSessionId` on create) calls the same
+ * Bootstrap resume (`continueSession` / `resumeSessionId` on create) resolves the
+ * target id first, adopts it via `initialSessionId` (so the session-scoped log
+ * sink is correct from the start), then calls the same
  * {@link ManagedAgent.restoreSession} path as Session command `session.resume`.
  * Mid-session switches should use `session.dispatch({ type: "session.resume", ... })`.
  */
+
+import { SessionStore } from "../agent/persistence/session-store.js";
 
 import { createLocalAgentSession } from "./local-agent-session.js";
 
@@ -18,7 +22,6 @@ import type { LocalAgentSessionManager } from "./local-agent-session.js";
 import type { AgentSession } from "./types.js";
 import type { AgentManager } from "../managers/agent-manager.js";
 import type { ManagedAgent, ManagedAgentConfig } from "../managers/managed-agent.js";
-import type { UIMessage } from "@tanstack/ai";
 
 /** Minimal manager surface required by the Local Host (AgentManager satisfies this). */
 export interface LocalAgentSessionHostManager extends LocalAgentSessionManager {
@@ -63,44 +66,30 @@ function toManagedConfig(options: AgentSessionCreateOptions): ManagedAgentConfig
 }
 
 /**
- * Bootstrap-time disk restore. Same `restoreSession` path as `session.resume`
- * (queues cleared + approval/ask_user reconciled inside restore).
- * `initChat` still runs after restore because the chat controller does not exist yet.
+ * Resolve the on-disk session to restore at bootstrap (before the managed agent
+ * is created, so its id is fixed before the log sink attaches):
+ * - explicit `resumeSessionId`
+ * - `continueSession` → most recently updated session
+ * - default → most recently updated *empty* session (no user messages), reserved
+ *   here so a concurrent process skips it and picks a different one
+ *
+ * Returns `undefined` when a fresh session should be created. Best-effort: a
+ * degraded/missing CoreEnv fs falls back to a fresh session.
  */
-async function restoreInitialMessages(
-  managed: ManagedAgent,
-  options: AgentSessionCreateOptions
-): Promise<UIMessage[] | undefined> {
-  if (options.resumeSessionId) {
-    const data = await managed.restoreSession(options.resumeSessionId);
-    return data.uiMessages;
-  }
-  if (!options.continueSession) {
-    // Default startup: reuse the most recently updated *empty* session (no user
-    // messages) instead of creating a new one every launch — avoids piling up
-    // empty session files. Sessions with real history are only resumed via an
-    // explicit `--continue` / `--resume`.
-    const store = managed.getSessionStore?.() ?? null;
-    if (store) {
-      const empty = await store.getLatestEmpty();
-      if (empty) {
-        // Reserve the id on disk BEFORE restoring so a second process/agent
-        // starting concurrently (cross-process ownership is not shared) skips
-        // it and picks a different empty session or creates a fresh one.
-        await store.reserveSession(empty.id);
-        const data = await managed.restoreSession(empty.id);
-        return data.uiMessages;
-      }
+async function resolveBootstrapSessionId(options: AgentSessionCreateOptions): Promise<string | undefined> {
+  if (options.resumeSessionId) return options.resumeSessionId;
+  try {
+    const store = new SessionStore();
+    if (options.continueSession) {
+      return (await store.getLatest())?.id;
     }
+    const empty = await store.getLatestEmpty();
+    if (!empty) return undefined;
+    await store.reserveSession(empty.id);
+    return empty.id;
+  } catch {
     return undefined;
   }
-
-  const store = managed.getSessionStore?.() ?? null;
-  if (!store) return undefined;
-  const latest = await store.getLatest();
-  if (!latest) return undefined;
-  const data = await managed.restoreSession(latest.id);
-  return data.uiMessages;
 }
 
 class LocalAgentSessionHostImpl implements AgentSessionHost {
@@ -112,9 +101,18 @@ class LocalAgentSessionHostImpl implements AgentSessionHost {
   }
 
   async create(options: AgentSessionCreateOptions): Promise<AgentSessionCreateResult> {
-    const managed = await this.manager.createManagedAgent(toManagedConfig(options));
-    const initialMessages = await restoreInitialMessages(managed, options);
-    const initial = initialMessages ?? [];
+    // Resolve the reuse/resume target up front and pass it through as
+    // `initialSessionId`, so the managed agent's session id (and thus the
+    // session-scoped log sink) is correct before any bootstrap log entry.
+    const targetSessionId = await resolveBootstrapSessionId(options);
+    const managed = await this.manager.createManagedAgent({
+      ...toManagedConfig(options),
+      ...(targetSessionId ? { initialSessionId: targetSessionId } : {}),
+    });
+    // Full disk restore — same `restoreSession` path as `session.resume`
+    // (queues cleared + approval/ask_user reconciled inside restore).
+    const restored = targetSessionId ? await managed.restoreSession(targetSessionId) : undefined;
+    const initial = restored?.uiMessages ?? [];
 
     // Fix the session id before the first persist (in-memory only; no disk
     // write until the first save()). The JSONL log sink is attached by the
@@ -152,6 +150,11 @@ class LocalAgentSessionHostImpl implements AgentSessionHost {
   }
 
   async destroy(agentId: string): Promise<void> {
+    // Capture the root session's store/id before the manager drops the agent.
+    const managed = this.manager.getAgent(agentId);
+    const store = !managed?.parentId ? (managed?.getSessionStore?.() ?? null) : null;
+    const sessionId = store ? managed?.getSessionData()?.id : undefined;
+
     // Cascade: drop cached sessions for the agent and any children (the manager
     // already removes them from its registry). Child sessions expose their
     // parent via snapshot.parentId.
@@ -162,6 +165,13 @@ class LocalAgentSessionHostImpl implements AgentSessionHost {
       }
     }
     this.manager.destroyAgent(agentId);
+
+    // Release the startup reservation for a still-empty root session so a later
+    // launch reuses it instead of piling up a fresh empty session. Best-effort:
+    // a crash keeps the reservation and it expires on its own.
+    if (store && sessionId) {
+      await store.releaseReservation(sessionId).catch(() => {});
+    }
   }
 }
 

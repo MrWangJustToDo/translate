@@ -59,6 +59,7 @@
     "validate:agent-log-timeline": "pnpm run build && node scripts/validate-agent-log-timeline.mjs",
     "validate:agent-log-file-sink": "pnpm run build && node scripts/validate-agent-log-file-sink.mjs",
     "validate:agent-log-host-sink": "pnpm run build && node scripts/validate-agent-log-host-sink.mjs",
+    "validate:session-reuse-log": "pnpm run build && node scripts/validate-session-reuse-log.mjs",
     "validate:middleware-log": "pnpm run build && node scripts/validate-middleware-log.mjs",
     "validate:agent-status": "pnpm run build && node scripts/validate-agent-status.mjs",
     "validate:agent-run-finalization": "pnpm run build && node scripts/validate-agent-run-finalization.mjs",

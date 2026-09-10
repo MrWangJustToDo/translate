@@ -59,6 +59,7 @@ export async function buildManagedAgent({
     skillDirs,
     compaction,
     mcpConfigPath,
+    initialSessionId,
     ...restConfig
   } = config;
 
@@ -352,6 +353,13 @@ export async function buildManagedAgent({
       modelStyle: config.modelStyle ?? resolvedModelInfo?.style ?? "openai",
       model: restConfig.model,
     });
+    // Adopt a pre-resolved restore target's id BEFORE the log sink attaches
+    // (`createManagedAgent`), so bootstrap entries land in the reused session's
+    // log dir instead of a transient id. The full restore runs later in the host.
+    if (initialSessionId) {
+      const restored = await sessionStore.load(initialSessionId);
+      if (restored) managed.setSessionData(restored);
+    }
   }
 
   managed.name = name;

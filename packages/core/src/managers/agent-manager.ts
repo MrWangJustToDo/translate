@@ -1,5 +1,4 @@
 import { createAgentEventBus } from "../agent/agent-event-bus";
-import { AGENT_LOG_DIR } from "../agent/persistence/types.js";
 import { createSubagentTools } from "../agent/subagent/subagent-tools.js";
 import { unregisterStreamingEventBus } from "../agent/tools/util/streaming-callback.js";
 import { getEnv } from "../env.js";
@@ -175,8 +174,7 @@ export class AgentManager {
       // timeline includes session:start/doc/skill/memory (persistence-only
       // log — pre-attach entries would be dropped).
       managed.ensureSessionData();
-      const sessionId = managed.getSessionData()?.id ?? managed.id;
-      managed.getLog()?.attachFileSink({ dir: `${AGENT_LOG_DIR}/${sessionId}` });
+      managed.bindSessionLogSink();
     }
 
     if (bootstrap) {

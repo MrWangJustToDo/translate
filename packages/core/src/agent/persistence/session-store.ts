@@ -217,6 +217,21 @@ export class SessionStore {
   }
 
   /**
+   * Clear a still-empty session's startup reservation so a later launch can
+   * reuse it again. Called on graceful agent teardown; a crash instead leaves
+   * the reservation to expire on its own ({@link EMPTY_SESSION_RESERVE_MS}).
+   * No-op when the session is no longer empty (it is never selected again) or
+   * was never reserved.
+   */
+  async releaseReservation(id: string): Promise<void> {
+    const session = await this.load(id);
+    if (!session || session.uiMessages.some((m) => m.role === "user")) return;
+    if (session.reservedAt === undefined) return;
+    delete session.reservedAt;
+    await this.save(session);
+  }
+
+  /**
    * Find sessions by name (partial match, case-insensitive).
    */
   async findByName(query: string): Promise<SessionMeta[]> {
