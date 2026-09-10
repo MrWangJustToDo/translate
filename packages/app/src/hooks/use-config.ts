@@ -114,10 +114,12 @@ export const useConfig = createState(
        * restart resumes at it. Updates the in-memory modelsConfig.active and the
        * config defaults used by agent creation.
        *
-       * Session entries (remote-session hosts) only update `modelsConfig.active`:
-       * the connection fields are server-owned, and writing `config.model` here
-       * would flip the agent-chat effect deps and tear down the live remote
-       * session.
+       * Session entries (remote-session hosts) only update `modelsConfig.active`
+       * and the display-only `config.serverModel`: the connection fields are
+       * server-owned, and writing `config.model` here would flip the agent-chat
+       * effect deps and tear down the live remote session. `config.serverModel`
+       * is read by the status surfaces (footer/help/usage) and is deliberately
+       * kept out of those deps, so it is safe to refresh after a switch.
        */
       selectModel: (entryIndex: number, model: string, entry: LoadedModelEntry) => {
         if (state.modelsConfig) {
@@ -126,7 +128,10 @@ export const useConfig = createState(
             active: { entryIndex, model },
           };
         }
-        if (entry.type === "session") return;
+        if (entry.type === "session") {
+          state.config.serverModel = model;
+          return;
+        }
         state.config.model = model;
         state.config.style = entry.style;
         state.config.baseURL = entry.baseURL;
