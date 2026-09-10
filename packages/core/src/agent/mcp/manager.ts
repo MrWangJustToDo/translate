@@ -1,8 +1,9 @@
 import { createMCPClient } from "@tanstack/ai-mcp";
 
 import { getEnv } from "../../env.js";
+import { toModelOutputRegistry } from "../tools/runtime/to-model-output-registry.js";
 
-import { wrapMcpToolForMultimodalContent } from "./prefer-multimodal-content.js";
+import { resolveMcpModelOutput, wrapMcpToolForMultimodalContent } from "./prefer-multimodal-content.js";
 
 import type { McpConfig, McpServerConfig } from "./types.js";
 import type { McpProcessHandle } from "../../env.js";
@@ -118,6 +119,15 @@ export class McpManager {
           for (const tool of tools) {
             // TanStack prefers structuredContent and drops content[] images; re-wrap execute.
             allTools[tool.name] = wrapMcpToolForMultimodalContent(tool, client);
+
+            // MCP tools are created dynamically (never via `defineServerTool`), so no
+            // `toModelOutput` is registered for them. `applyToolCompact` then leaves the
+            // persisted tool result untouched — and TanStack persists array results as
+            // JSON text, so image base64 reaches the model as plain text: vision models
+            // still need another tool to "read" the image, and the base64 is re-sent
+            // every turn. Register the default resolver so media is revived to
+            // ContentPart[] and lifted to `image_url` by the adapter.
+            toModelOutputRegistry.register(tool.name, ({ output }) => resolveMcpModelOutput(output));
           }
 
           this.clients.set(name, client);

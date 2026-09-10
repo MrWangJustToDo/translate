@@ -6,7 +6,9 @@
  * We resolve results ourselves so vision-capable parts reach the model.
  */
 
-import type { AnyServerTool } from "@tanstack/ai";
+import { isContentPartArray } from "@tanstack/ai";
+
+import type { AnyServerTool, ContentPart } from "@tanstack/ai";
 import type { MCPClient } from "@tanstack/ai-mcp";
 
 // ============================================================================
@@ -84,6 +86,58 @@ export function mcpContentToTanstack(content: McpContentBlock[] | undefined): st
 
   const filtered = parts.filter((part) => !(part.type === "text" && part.content === ""));
   return filtered.length > 0 ? filtered : "";
+}
+
+/**
+ * Recover multimodal {@link ContentPart}[] from a persisted MCP tool result.
+ *
+ * Tool results reach `toModelOutput` in their **persisted** form: TanStack's
+ * `normalize-stream-chunk` turns `TOOL_CALL_END.result` into
+ * `TOOL_CALL_RESULT.content` via `JSON.stringify` whenever the result is an
+ * array. So a multimodal MCP result arrives as the JSON text of a ContentPart[]
+ * (base64 inline) instead of the array itself.
+ */
+function coerceMultimodalParts(value: unknown): ContentPart[] | null {
+  if (isContentPartArray(value)) return value;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("[{")) return null;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (isContentPartArray(parsed)) return parsed;
+    } catch {
+      // Not JSON — treat as plain text.
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Model-facing content for a dynamically created MCP tool.
+ *
+ * MCP tools are not authored via `defineServerTool`, so they have no
+ * `toModelOutput` registered. Without this resolver `applyToolCompact` leaves the
+ * persisted string untouched: image base64 stays plain text, the adapter can
+ * never lift it into `image_url`, and the model has to fall back to another tool
+ * to actually see the media (while re-sending the base64 every turn).
+ *
+ * Multimodal results are revived to {@link ContentPart}[]; everything else keeps
+ * the existing passthrough/JSON-text shape.
+ */
+export function resolveMcpModelOutput(output: unknown): string | ContentPart[] {
+  const parts = coerceMultimodalParts(output);
+  if (parts) return parts;
+
+  if (typeof output === "string") return output;
+  if (output === undefined || output === null) return "";
+
+  try {
+    return JSON.stringify(output);
+  } catch {
+    return String(output);
+  }
 }
 
 /**

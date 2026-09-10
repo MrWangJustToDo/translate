@@ -46,6 +46,7 @@ export { buildExploreSystemPrompt, SUBAGENT_EXPLORE_SYSTEM_PROMPT } from "../age
 export {
   mcpContentHasMultimodal,
   mcpContentToTanstack,
+  resolveMcpModelOutput,
   resolveMcpToolExecuteResult,
   wrapMcpToolForMultimodalContent,
 } from "../agent/mcp/prefer-multimodal-content.js";
