@@ -30,13 +30,16 @@ export const ToolInputView = ({
   const isExecuting = isToolExecuting(part);
   const isTask = toolName === "task";
   const taskInput = toolInput as { prompt?: string; description?: string };
-  const { phase: taskPhase } = useTask({ taskId: isTask ? part.id : "" });
+  const { phase: taskPhase, retry: taskRetry } = useTask({ taskId: isTask ? part.id : "" });
 
   // Compact: hide bulky diffs unless the user must review for approval.
   const showFileDiffs = mode === "full" || uiState === "approval-requested";
 
   if (toolName === "task") {
-    if (!taskInput?.prompt || !isExecuting || taskPhase === "summary") return null;
+    if (!taskInput?.prompt || taskPhase === "summary") return null;
+    // Keep the row visible while a transient retry is in flight (the tool-call
+    // is briefly not executing) so the retry state has somewhere to render.
+    if (!isExecuting && !taskRetry) return null;
     return <TaskToolInputView part={part} toolInput={toolInput} />;
   }
 

@@ -4,11 +4,12 @@ import { Spinner } from "../components/Spinner";
 import { useTask } from "../hooks/use-task";
 import { COLORS } from "../theme/colors.js";
 import { formatToolInput } from "../utils/format";
+import { formatRetryStatus } from "../utils/retry-status";
 
 import type { ToolCallPart } from "@tanstack/ai";
 
 export const TaskToolInputView = ({ part }: { part: ToolCallPart; toolInput: unknown }) => {
-  const { allTools, total, agent } = useTask({ taskId: part.id });
+  const { allTools, total, agent, retry } = useTask({ taskId: part.id });
 
   const currentTool = allTools?.at(-1);
   const toolName = currentTool ? currentTool.toolName : "";
@@ -44,6 +45,13 @@ export const TaskToolInputView = ({ part }: { part: ToolCallPart; toolInput: unk
         </>
       ) : (
         <Spinner />
+      )}
+      {retry && (
+        <Box flexShrink={0} flexGrow={0} paddingLeft={1}>
+          <Text color={COLORS.danger} wrap="truncate">
+            {formatRetryStatus(retry)}
+          </Text>
+        </Box>
       )}
     </Box>
   );

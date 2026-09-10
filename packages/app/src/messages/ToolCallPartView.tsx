@@ -1,7 +1,6 @@
 import { Box, Text } from "ink";
 
 import { HalfLinePaddedBox } from "../components/HalfLinePaddedBox.js";
-import { Spinner } from "../components/Spinner.js";
 import { useTranscriptDisplayMode } from "../context/transcript-display-context.js";
 import { useSize } from "../hooks";
 import { useSummaryStream } from "../hooks/use-summary-stream.js";
@@ -20,7 +19,6 @@ import {
   getToolCallColor,
   LIVE_DURATION_THRESHOLD_MS,
 } from "../utils/format.js";
-import { formatRetryStatus } from "../utils/retry-status.js";
 import { getUiToolState, isToolExecuting, parseToolInput } from "../utils/tool-part.js";
 
 import { StreamingOutputView } from "./StreamingOutputView.js";
@@ -82,11 +80,7 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
   // user message boxes (screenWidth - 2).
   const boxWidth = Math.max(screenWidth - 4, 1);
   const liveElapsedMs = useToolElapsed(toolCallId, isExecuting, LIVE_DURATION_THRESHOLD_MS);
-  const {
-    phase: taskPhase,
-    usage: taskUsage,
-    retry: taskRetry,
-  } = useTask({
+  const { phase: taskPhase, usage: taskUsage } = useTask({
     taskId: isTask ? part.id : "",
   });
   // Authoritative per-task phase machine (running → summary): `begin_summary`
@@ -161,8 +155,6 @@ export const ToolCallPartView = ({ part, streamingThrottleMs }: ToolCallPartView
         </Box>
         <Text wrap="wrap">{headerText}</Text>
       </Box>
-
-      {isTask && taskRetry && <Spinner text={formatRetryStatus(taskRetry)} />}
 
       <ToolInputView part={part} toolInput={toolInput} uiState={uiState} hasError={Boolean(errorText)} />
 
