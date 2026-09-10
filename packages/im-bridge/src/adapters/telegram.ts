@@ -145,7 +145,14 @@ function toKeyboard(
   buttons: Button[] | undefined
 ): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } | undefined {
   if (!buttons || buttons.length === 0) return undefined;
-  return { inline_keyboard: [buttons.map((button) => ({ text: button.label, callback_data: button.data }))] };
+  // Wrap long rows (multi-select options + Submit can exceed one tidy row);
+  // Telegram caps inline rows at 8 buttons, 3 keeps labels readable on mobile.
+  const ROW_SIZE = 3;
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < buttons.length; i += ROW_SIZE) {
+    rows.push(buttons.slice(i, i + ROW_SIZE).map((button) => ({ text: button.label, callback_data: button.data })));
+  }
+  return { inline_keyboard: rows };
 }
 
 function clamp(text: string): string {

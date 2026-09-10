@@ -26,6 +26,7 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "start": "node dist/cli.mjs",
+    "validate:bridge": "pnpm run build && node scripts/validate-bridge.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -233,7 +233,17 @@ export function toolStatusLine(part: ToolCallPart): string {
   if (part.approval?.needsApproval && part.approval.approved === undefined) {
     return `📎 ${label} · ⏸ awaiting approval`;
   }
+  // ask_user without options has no buttons — the only answer channel is a
+  // plain reply, so say so on the row instead of a bare "running".
+  if (part.name === ASK_USER_TOOL && askUserOptionCount(part) === 0) {
+    return `📎 ${label} · ⏳ reply with text`;
+  }
   return `📎 ${label} · running`;
+}
+
+function askUserOptionCount(part: ToolCallPart): number {
+  const options = parseInputJson(part)?.options;
+  return Array.isArray(options) ? options.length : 0;
 }
 
 /** Scan run messages for interactions that need a user answer. */
@@ -302,8 +312,11 @@ export function renderRunSegments(messages: UIMessage[]): RunSegment[] {
           pending: false,
         });
       } else if (isToolCallPart(part)) {
+        // Only post an ask_user row once its args are complete — a mid-stream
+        // part (args still arriving) would otherwise render as a bare
+        // `📎 ask_user · running` with no question and no buttons.
         const pending =
-          (part.name === ASK_USER_TOOL && part.output === undefined) ||
+          (part.name === ASK_USER_TOOL && part.state === "input-complete" && part.output === undefined) ||
           (part.approval?.needsApproval === true && part.approval.approved === undefined);
         segments.push({
           key: toolSegmentKey(message.id, partIndex, part.id),

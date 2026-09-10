@@ -3,185 +3,38 @@
  * AgentSession, no server / no Telegram required.
  *
  * Covers: inbound → dispatch, approval button → respondApproval (buttons ride
- * on the tool call's own message), ask_user button → addToolResult, TTL
- * auto-deny, allowlist rejection, restart recovery (sessions.json →
- * host.connect), code-block-aware splitting, ordered non-streaming segment
- * rendering (text sealed → posted; final answer at finalize).
+ * on the tool call's own message), ask_user buttons → addToolResult (single /
+ * free-text / multi-select toggle+submit), strict segment order with the answer
+ * TTL armed only after the row renders, TTL auto-deny, allowlist rejection,
+ * restart recovery (sessions.json → host.connect), code-block-aware splitting,
+ * ordered non-streaming segment rendering (text sealed → posted; final answer
+ * at finalize).
  *
- * Run after `pnpm build:im-bridge`:
+ * Run (builds first):
+ *   pnpm --filter @my-agent/im-bridge validate:bridge
  *   node packages/im-bridge/scripts/validate-bridge.mjs
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const { createImBridge, parseBridgeConfig, SessionResolver, splitMessage, RunRenderer } =
-  await import("../dist/index.mjs");
-
-// ============================================================================
-// Fakes
-// ============================================================================
-
-function createFakeSession(id) {
-  const handlers = new Set();
-  const dispatched = [];
-  const state = { status: "idle", messages: [] };
-  return {
-    id,
-    dispatched,
-    state,
-    emit(channel, payload) {
-      for (const handler of handlers) handler({ channel, payload, ts: Date.now() });
-    },
-    getSnapshot() {
-      return { status: state.status, messages: state.messages };
-    },
-    async dispatch(command) {
-      dispatched.push(command);
-      return { ok: true };
-    },
-    subscribe(handler) {
-      handlers.add(handler);
-      return () => handlers.delete(handler);
-    },
-  };
-}
-
-function createFakeHost() {
-  const sessions = new Map();
-  let counter = 0;
-  return {
-    sessions,
-    connectCalls: [],
-    async create() {
-      const session = createFakeSession(`agent_fake_${++counter}`);
-      sessions.set(session.id, session);
-      return { session };
-    },
-    connect(agentId) {
-      this.connectCalls.push(agentId);
-      return sessions.get(agentId) ?? null;
-    },
-    list() {
-      return [];
-    },
-    async destroy(agentId) {
-      sessions.delete(agentId);
-    },
-  };
-}
-
-function createMockAdapter() {
-  let messageHandler = null;
-  let buttonHandler = null;
-  const sent = [];
-  const edits = [];
-  /** Unified send/edit chronology — ordering assertions read this. */
-  const log = [];
-  let counter = 0;
-  const adapter = {
-    platform: "mock",
-    caps: { markdown: false, editMessage: true, buttons: true, maxTextLength: 4096, streaming: "edit" },
-    sent,
-    edits,
-    log,
-    async start() {},
-    async stop() {},
-    onMessage(handler) {
-      messageHandler = handler;
-    },
-    onButton(handler) {
-      buttonHandler = handler;
-    },
-    async sendText(target, text, options) {
-      const ref = { messageId: `m${++counter}`, chat: target };
-      sent.push({ ref, text, buttons: options?.buttons });
-      log.push({ op: "send", messageId: ref.messageId, text, buttons: options?.buttons });
-      return ref;
-    },
-    async sendButtons(target, text, buttons) {
-      return adapter.sendText(target, text, { buttons });
-    },
-    async editMessage(target, messageId, text, options) {
-      edits.push({ messageId, text, buttons: options?.buttons });
-      log.push({ op: "edit", messageId, text, buttons: options?.buttons });
-    },
-    async setTyping() {},
-    async emitMessage(msg) {
-      await messageHandler(msg);
-    },
-    async emitButton(cb) {
-      await buttonHandler(cb);
-    },
-  };
-  return adapter;
-}
-
-const CHAT = { chatId: "chat1", chatType: "private" };
-const tmpBase = mkdtempSync(join(tmpdir(), "im-bridge-validate-"));
-
-function makeConfig(env = {}) {
-  return parseBridgeConfig({
-    REMOTE_SESSION: "http://localhost:59999",
-    TELEGRAM_BOT_TOKEN: "test-token",
-    IM_BRIDGE_APPROVAL_TTL_MS: "120",
-    IM_BRIDGE_DATA_DIR: join(tmpBase, env.dirSuffix ?? "default"),
-    ...env,
-  });
-}
-
-async function waitFor(predicate, timeoutMs = 2000, what = "condition") {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`Timed out waiting for ${what}`);
-}
-
-function approvalPart() {
-  return {
-    type: "tool-call",
-    id: "tc1",
-    name: "run_command",
-    arguments: JSON.stringify({ command: "npm test" }),
-    state: "input-complete",
-    approval: { id: "ap1", needsApproval: true, approved: undefined },
-    output: undefined,
-  };
-}
-
-function askUserPart() {
-  return {
-    type: "tool-call",
-    id: "tc2",
-    name: "ask_user",
-    arguments: JSON.stringify({ question: "Pick one", options: ["Alpha", "Beta"] }),
-    state: "input-complete",
-    output: undefined,
-  };
-}
-
-async function startBridge(env = {}) {
-  const config = makeConfig(env);
-  const host = createFakeHost();
-  const adapter = createMockAdapter();
-  const errors = [];
-  const bridge = await createImBridge({
-    config,
-    adapter,
-    host,
-    onError: (error) => errors.push(error),
-  });
-  await bridge.start();
-  startedBridges.push(bridge);
-  return { config, host, adapter, errors, bridge };
-}
-
-/** Stopped after the suite so live cycles' typing/TTL timers don't hang the process. */
-const startedBridges = [];
+import {
+  CHAT,
+  RunRenderer,
+  SessionResolver,
+  approvalPart,
+  askUserMultiSelectPart,
+  askUserNoOptionsPart,
+  askUserPart,
+  createFakeHost,
+  makeConfig,
+  splitMessage,
+  startBridge,
+  startedBridges,
+  tmpBase,
+  waitFor,
+} from "./validate-bridge-harness.mjs";
 
 // ============================================================================
 // Scenarios
@@ -293,6 +146,150 @@ async function testAskUserButton() {
     "settled row after ask_user answer"
   );
   console.log("✓ ask_user option button → addToolResult(answer), row settled in place (▸ Beta)");
+}
+
+/** ask_user with NO options: no buttons; a plain reply supplies the answer. */
+async function testAskUserFreeTextAnswer() {
+  const { adapter, host } = await startBridge({ IM_BRIDGE_APPROVAL_TTL_MS: "5000" });
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "ask me", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  session.state.messages = [{ role: "assistant", parts: [askUserNoOptionsPart()] }];
+  session.emit("messages", session.state.messages);
+  await waitFor(
+    () => adapter.log.some((entry) => entry.text.includes("ask_user") && entry.text.includes("reply with text")),
+    2000,
+    "option-less ask_user row"
+  );
+
+  // A plain text reply is the answer (not a new turn / steer).
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "Ada", raw: null });
+  await waitFor(() => session.dispatched.some((cmd) => cmd.type === "addToolResult"), 2000, "free-text addToolResult");
+  const command = session.dispatched.find((cmd) => cmd.type === "addToolResult");
+  assert.equal(command.toolCallId, "tc3");
+  assert.equal(command.output.answer, "Ada");
+  assert.equal(command.output.draft, "Ada");
+  assert.equal(command.output.hasOptions, false);
+  assert.ok(
+    !session.dispatched.some((cmd) => cmd.type === "send" && cmd.content === "Ada"),
+    "free-text answer is not sent as a new turn"
+  );
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.buttons === undefined && entry.text.includes("▸ Ada")),
+    2000,
+    "settled free-text row"
+  );
+  console.log("✓ option-less ask_user → plain reply becomes the free-text answer");
+}
+
+/** multiSelect: toggle options (no dispatch) then Submit commits the set. */
+async function testAskUserMultiSelect() {
+  const { adapter, host } = await startBridge({ IM_BRIDGE_APPROVAL_TTL_MS: "5000" });
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "ask me", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  session.state.messages = [{ role: "assistant", parts: [askUserMultiSelectPart()] }];
+  session.emit("messages", session.state.messages);
+  await waitFor(
+    () => adapter.log.some((entry) => entry.buttons?.some((button) => button.label === "✔ Submit")),
+    2000,
+    "multi-select buttons"
+  );
+  const row = adapter.log.find((entry) => entry.buttons?.some((button) => button.label === "✔ Submit"));
+  const toggle = (label) => row.buttons.find((button) => button.label.endsWith(label));
+  const submit = row.buttons.find((button) => button.label === "✔ Submit");
+  assert.ok(
+    row.buttons.some((button) => button.label.startsWith("⬜")),
+    "options render unchecked"
+  );
+
+  const click = (button) =>
+    adapter.emitButton({
+      platform: "mock",
+      chat: CHAT,
+      messageId: row.messageId,
+      userId: "u1",
+      data: button.data,
+      ack: async () => {},
+    });
+
+  await click(toggle("Alpha"));
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.buttons?.some((button) => button.label === "✅ Alpha")),
+    2000,
+    "toggle re-render"
+  );
+  assert.ok(
+    !session.dispatched.some((cmd) => cmd.type === "addToolResult"),
+    "toggling does not resolve the interaction"
+  );
+  await click(toggle("Beta"));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await click(submit);
+
+  await waitFor(() => session.dispatched.some((cmd) => cmd.type === "addToolResult"), 2000, "multi-select submit");
+  const command = session.dispatched.find((cmd) => cmd.type === "addToolResult");
+  assert.equal(command.toolCallId, "tc4");
+  assert.deepEqual(command.output.selected, ["Alpha", "Beta"]);
+  assert.equal(command.output.multiSelect, true);
+  assert.equal(command.output.answer, "Alpha, Beta");
+  await waitFor(
+    () => adapter.edits.some((entry) => entry.buttons === undefined && entry.text.includes("▸ Alpha, Beta")),
+    2000,
+    "settled multi-select row"
+  );
+  console.log("✓ multiSelect → toggle options then Submit → addToolResult(selected)");
+}
+
+/**
+ * STRICT ORDER + TTL-after-render.
+ *
+ * A long run posts dozens of tool lines through ONE ordered queue, so an
+ * interaction row waits for the segments before it — never reorders the
+ * transcript. The answer TTL is armed only when the row's buttons are actually
+ * visible, so the backlog can delay a row but never silently expire it. Here 30
+ * tool lines @40ms (≈1.2s) back up the queue while the TTL is only 300ms: if
+ * the timer were armed at registration, the ask_user row would render
+ * button-less as `(timed out)`.
+ */
+async function testInteractionStrictOrderAndTtlAfterRender() {
+  const { adapter, host } = await startBridge({ IM_BRIDGE_APPROVAL_TTL_MS: "300" }, { delayMs: 40 });
+  await adapter.emitMessage({ platform: "mock", chat: CHAT, userId: "u1", text: "long run", raw: null });
+  const session = [...host.sessions.values()][0];
+  await waitFor(() => adapter.sent.length === 1, 2000, "placeholder");
+
+  const tools = Array.from({ length: 30 }, (_, i) => ({
+    type: "tool-call",
+    id: `bt${i}`,
+    name: "read_file",
+    arguments: JSON.stringify({ path: `f${i}.ts` }),
+    state: "input-complete",
+    output: { success: true, content: "x" },
+  }));
+  session.state.messages = [{ role: "assistant", parts: [...tools, askUserPart()] }];
+  session.emit("messages", session.state.messages);
+
+  // Must render WITH buttons despite TTL < backlog — proves the TTL started at
+  // render, not at registration.
+  await waitFor(
+    () => adapter.log.some((entry) => entry.buttons?.some((button) => button.label === "Alpha")),
+    6000,
+    "ask_user buttons (TTL must wait for the render)"
+  );
+  const askIndex = adapter.log.findIndex((entry) => entry.buttons?.some((button) => button.label === "Alpha"));
+  const askEntry = adapter.log[askIndex];
+  assert.ok(askEntry.text.includes("Pick one"), "row carries the question");
+  assert.ok(!askEntry.text.includes("timed out"), "TTL did not fire before the row was rendered");
+
+  // Strict order: every preceding tool line is posted before the ask_user row.
+  const lastToolIndex = adapter.log
+    .map((entry) => entry.text)
+    .reduce((acc, text, index) => (text.includes("read_file") ? index : acc), -1);
+  assert.ok(lastToolIndex !== -1, "tool lines were posted");
+  assert.ok(askIndex > lastToolIndex, "ask_user row renders AFTER its preceding tool lines (strict order)");
+  console.log("✓ interaction stays in strict order and its TTL starts after the row is rendered");
 }
 
 async function testOneMessagePerApproval() {
@@ -772,6 +769,9 @@ const tests = [
   testInboundDispatch,
   testApprovalButton,
   testAskUserButton,
+  testAskUserFreeTextAnswer,
+  testAskUserMultiSelect,
+  testInteractionStrictOrderAndTtlAfterRender,
   testOneMessagePerApproval,
   testTtlAutoDeny,
   testAllowlistRejection,

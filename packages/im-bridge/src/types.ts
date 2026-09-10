@@ -113,10 +113,10 @@ export type PendingInteraction =
 
 /** Payload encoded into button `data` (kept tiny for the 64-byte callback limit). */
 export interface ButtonPayload {
-  /** approve | deny | option */
-  a: "y" | "n" | "o";
+  /** approve | deny | option (single-select) | toggle (multi-select) | submit (multi-select) */
+  a: "y" | "n" | "o" | "t" | "s";
   /** PendingInteractionStore request id. */
   r: string;
-  /** Option index for ask_user buttons. */
+  /** Option index for ask_user option / toggle buttons. */
   i?: number;
 }

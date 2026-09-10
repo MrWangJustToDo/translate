@@ -17,7 +17,13 @@
  *
  * The "⏳" placeholder message is claimed (edited in place) by the first
  * posted segment, so the reply reads top-down without a dangling hourglass.
- * Sends and edits serialize through one queue to preserve platform order.
+ *
+ * STRICT ORDER: sends and edits serialize through ONE queue, in segment order —
+ * the chat transcript always reads top-down exactly like the app's message view
+ * (assistant text / tool lines / interaction rows never reorder). An interaction
+ * row's buttons therefore wait for the segments before it, but the interaction's
+ * TTL only starts once the row is actually rendered (`onInteractionRendered`) —
+ * a long run's tool-line backlog can delay the row, never silently expire it.
  */
 
 import { renderRunSegments } from "../interaction/render.js";
@@ -35,6 +41,13 @@ export interface RunRendererOptions {
   onError: (error: unknown) => void;
   /** Diagnostic channel (bridge logs it to `<dataDir>/bridge.log`). */
   onDebug?: (message: string) => void;
+  /**
+   * Fired ONCE per interaction segment, the moment its buttons are actually
+   * visible on the platform. The bridge starts the answer TTL here — not at
+   * registration — so a row delayed behind the tool-line backlog still gets its
+   * full answer window instead of expiring before the user ever sees it.
+   */
+  onInteractionRendered?: (segmentKey: string) => void;
 }
 
 interface SegmentState {
@@ -54,6 +67,8 @@ interface SegmentState {
   done: boolean;
   /** Tool only: awaiting approval or an ask_user answer. */
   pending: boolean;
+  /** Set once the interaction row's buttons are visible — arms the answer TTL. */
+  renderedNotified: boolean;
   /** Set after the first successful post; null until then. */
   ref: SentMessageRef | null;
   lastText: string;
@@ -66,9 +81,14 @@ export class RunRenderer {
   private readonly placeholderRef: SentMessageRef;
   private readonly onError: (error: unknown) => void;
   private readonly onDebug: (message: string) => void;
+  private readonly onInteractionRendered: (segmentKey: string) => void;
 
   /** Insertion order = first-appearance order = the run's actual part order. */
   private readonly segments = new Map<string, SegmentState>();
+  /**
+   * The single ordered outbound queue. Every send/edit appends here, so the
+   * transcript mirrors the run's segment order exactly — interactions included.
+   */
   private queue: Promise<void> = Promise.resolve();
   /** Claimed (edited) by the first posted segment instead of a fresh send. */
   private placeholderClaimed = false;
@@ -80,6 +100,7 @@ export class RunRenderer {
     this.placeholderRef = options.placeholderRef;
     this.onError = options.onError;
     this.onDebug = options.onDebug ?? (() => {});
+    this.onInteractionRendered = options.onInteractionRendered ?? (() => {});
   }
 
   /**
@@ -103,6 +124,7 @@ export class RunRenderer {
           settled: false,
           done: segment.done,
           pending: segment.pending,
+          renderedNotified: false,
           ref: null,
           lastText: "",
         };
@@ -193,13 +215,9 @@ export class RunRenderer {
               segment.ref = await this.post(chunk, undefined);
             }
           } else if (segment.ref === null) {
-            const isInteraction = segment.buttons !== undefined;
-            segment.ref = await this.post(segment.text, isInteraction ? segment.buttons : undefined);
-            segment.awaitingResolution = isInteraction || segment.pending;
-            segment.lastText = segment.text;
-            segment.lastButtons = segment.buttons;
+            this.postSegment(segment);
           } else if ((segment.awaitingResolution || segment.settled) && segment.done) {
-            await this.edit(segment.ref, segment.text, undefined);
+            await this.editSegment(segment);
             segment.awaitingResolution = false;
             segment.lastText = segment.text;
             segment.lastButtons = undefined;
@@ -281,10 +299,7 @@ export class RunRenderer {
       // a subsequent click can always settle the row.
       const isInteraction = segment.buttons !== undefined;
       if (!isInteraction && !segment.pending && !segment.done) return;
-      segment.ref = await this.post(segment.text, isInteraction ? segment.buttons : undefined);
-      segment.awaitingResolution = isInteraction || segment.pending;
-      segment.lastText = segment.text;
-      segment.lastButtons = segment.buttons;
+      await this.postSegment(segment);
       return;
     }
     // Skip only when the row is not an interaction AND wasn't settled AND has
@@ -297,15 +312,44 @@ export class RunRenderer {
     // its terminal state (⏸ → running → ✓) and dropping its buttons. Edit only
     // when the content or buttons actually changed (a done row already flush-
     // edited once must not re-edit every reconcile).
-    const done = segment.done;
     if (segment.text === segment.lastText && segment.buttons === segment.lastButtons) return;
-    const showButtons = !done && segment.buttons !== undefined;
-    await this.edit(segment.ref, segment.text, showButtons ? segment.buttons : undefined);
+    await this.editSegment(segment);
+    segment.settled = false;
+    if (segment.done) segment.awaitingResolution = false;
+  }
+
+  /** Post a not-yet-posted segment; arms the answer TTL when buttons go live. */
+  private async postSegment(segment: SegmentState): Promise<void> {
+    const isInteraction = segment.buttons !== undefined;
+    segment.ref = await this.post(segment.text, isInteraction ? segment.buttons : undefined);
+    segment.awaitingResolution = isInteraction || segment.pending;
+    segment.lastText = segment.text;
+    segment.lastButtons = segment.buttons;
+    if (isInteraction) this.notifyRendered(segment);
+  }
+
+  /**
+   * Edit an interaction row in place: show/hide buttons and update its status
+   * line (⏸ → running → ✓). Buttons are cleared once the row is done.
+   */
+  private async editSegment(segment: SegmentState): Promise<void> {
+    const showButtons = !segment.done && segment.buttons !== undefined;
+    await this.edit(segment.ref as SentMessageRef, segment.text, showButtons ? segment.buttons : undefined);
     segment.lastText = segment.text;
     segment.lastButtons = showButtons ? segment.buttons : undefined;
-    if (done || !showButtons) segment.buttons = undefined;
-    segment.settled = false;
-    if (done) segment.awaitingResolution = false;
+    if (segment.done || !showButtons) segment.buttons = undefined;
+    if (showButtons) this.notifyRendered(segment);
+  }
+
+  /** Fire the rendered hook exactly once per interaction segment. */
+  private notifyRendered(segment: SegmentState): void {
+    if (segment.renderedNotified) return;
+    segment.renderedNotified = true;
+    try {
+      this.onInteractionRendered(segment.key);
+    } catch (error) {
+      this.onError(error);
+    }
   }
 
   /** Post a segment message: the first one claims the placeholder via edit. */

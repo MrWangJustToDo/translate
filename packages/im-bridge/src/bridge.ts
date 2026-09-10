@@ -27,7 +27,7 @@ import { SessionResolver, sessionKeyOf } from "./session-resolver.js";
 import { RunRenderer } from "./streaming/run-renderer.js";
 
 import type { BridgeConfig } from "./config.js";
-import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage, PendingInteraction } from "./types.js";
+import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage } from "./types.js";
 import type { AgentSession, AgentSessionCommand, AgentSessionHost } from "@my-agent/core";
 import type { UIMessage } from "@tanstack/ai";
 
@@ -156,6 +156,16 @@ export class BridgeRuntime {
         const key = sessionKeyOf(msg.platform, msg.chat);
         const session = this.activeSessions.get(key);
         if (session) await this.dispatch(session, { type: "stop" });
+        return;
+      }
+
+      // A plain text message while an ask_user is pending IS that interaction's
+      // answer — this is the free-form reply path and the ONLY way to answer an
+      // ask_user that carries no predefined options. Bridge commands are handled
+      // above, so they never get swallowed as answers.
+      const pendingAsk = this.pending.findPendingAskUser(sessionKeyOf(msg.platform, msg.chat));
+      if (pendingAsk && msg.text.trim().length > 0 && this.pending.canAnswer(pendingAsk, msg.userId)) {
+        await this.answerAskUser(pendingAsk, msg.text.trim());
         return;
       }
 
@@ -294,6 +304,12 @@ export class BridgeRuntime {
           placeholderRef: reply,
           onError: this.onError,
           onDebug: (message) => this.diag(message),
+          // The answer TTL starts when the row is actually visible — a long run's
+          // tool-line backlog must never expire an interaction the user never saw.
+          onInteractionRendered: (segmentKey) => {
+            const requestId = this.pending.markRenderedBySegment(segmentKey);
+            if (requestId) this.diag(`interaction rendered segment=${segmentKey} r=${requestId}`);
+          },
         });
         cycle.renderer = renderer;
         const buffered = cycle.bufferedMessages;
@@ -369,7 +385,7 @@ export class BridgeRuntime {
       if (this.postedInteractionIds.has(id)) continue;
       this.rememberPostedInteraction(id);
       const requestId = this.pending.nextRequestId();
-      this.pending.register(
+      const record = this.pending.register(
         interaction,
         {
           chatKey: cycle.chatKey,
@@ -379,7 +395,7 @@ export class BridgeRuntime {
         },
         requestId
       );
-      cycle.renderer.setButtons(interaction.segmentKey, this.pending.buttonsFor(interaction, requestId));
+      cycle.renderer.setButtons(interaction.segmentKey, this.pending.buttonsFor(record));
       this.diag(
         `interaction registered id=${id} r=${requestId} segment=${interaction.segmentKey} kind=${interaction.kind}`
       );
@@ -487,7 +503,7 @@ export class BridgeRuntime {
         await cb.ack();
         return;
       }
-      const record = this.pending.resolve(payload);
+      const record = this.pending.peek(payload.r);
       if (!record) {
         await cb.ack();
         await this.safeEditText(cb, "⏳ Expired or already answered.");
@@ -498,7 +514,25 @@ export class BridgeRuntime {
         return;
       }
 
-      const session = this.activeSessions.get(record.chatKey);
+      // Multi-select toggle: flip the option and re-render the SAME row — no
+      // resolution, no dispatch. The Submit button commits the selection.
+      if (payload.a === "t") {
+        this.pending.toggleOption(record, payload.i);
+        await cb.ack();
+        const renderer = this.cycles.get(record.chatKey)?.renderer;
+        renderer?.setButtons(record.pending.segmentKey, this.pending.buttonsFor(record));
+        this.diag(`button toggle r=${payload.r} i=${payload.i} selected=[${[...record.selected].join(",")}]`);
+        return;
+      }
+
+      // Resolve (and clear the TTL) BEFORE any async dispatch: a racing TTL
+      // expiry must not double-answer.
+      const resolved = this.pending.resolveById(payload.r);
+      if (!resolved) {
+        await cb.ack();
+        return;
+      }
+      const session = this.activeSessions.get(resolved.chatKey);
       await cb.ack();
       // Feedback FIRST: applyInteraction's dispatch blocks until the rest of
       // the run finishes (local mode), and the run events that re-render the
@@ -506,14 +540,57 @@ export class BridgeRuntime {
       // dropped + outcome shown) and submit in the background; failures
       // surface via onError.
       this.diag(
-        `button click a=${payload.a} r=${payload.r} kind=${record.pending.kind} segment=${record.pending.segmentKey} session=${session ? "yes" : "no"}`
+        `button click a=${payload.a} r=${payload.r} kind=${resolved.pending.kind} segment=${resolved.pending.segmentKey} session=${session ? "yes" : "no"}`
       );
-      this.settleInteractionRow(record, outcomeFor(record.pending, payload));
-      void this.applyInteraction(session, record, payload).catch((error) => this.onError(error));
+      this.settleInteractionRow(resolved, this.outcomeFor(resolved, payload));
+      void this.applyInteraction(session, resolved, payload).catch((error) => this.onError(error));
     } catch (error) {
       this.onError(error);
       await cb.ack();
     }
+  }
+
+  /**
+   * Answer a pending ask_user with free-form text (a plain reply while the
+   * question is pending). Also the only answer path when the tool was called
+   * without options.
+   */
+  private async answerAskUser(record: PendingRecord, answer: string): Promise<void> {
+    if (record.pending.kind !== "ask_user") return;
+    this.pending.resolveById(record.requestId);
+    const preview = answer.length > 120 ? `${answer.slice(0, 119)}…` : answer;
+    this.settleInteractionRow(record, `▸ ${preview}`);
+    this.diag(`free-text answer r=${record.requestId} segment=${record.pending.segmentKey}`);
+    const session = this.activeSessions.get(record.chatKey);
+    if (!session) return;
+    await this.dispatch(session, {
+      type: "addToolResult",
+      toolCallId: record.pending.toolCallId,
+      output: {
+        question: record.pending.question,
+        answer,
+        hasOptions: record.pending.options.length > 0,
+        multiSelect: false,
+        draft: answer,
+        durationMs: this.elapsedSinceRendered(record),
+        cachedOutputPath: null,
+      },
+    });
+  }
+
+  /** Row outcome label shown right after an answer. */
+  private outcomeFor(record: PendingRecord, payload: NonNullable<ReturnType<typeof decodeButtonPayload>>): string {
+    if (record.pending.kind === "approval") return payload.a === "y" ? "✓ approved" : "✗ denied";
+    if (payload.a === "s") {
+      const selected = this.pending.selectedOptions(record);
+      return `▸ ${selected.length > 0 ? selected.join(", ") : "(no answer)"}`;
+    }
+    return `▸ ${record.pending.options[payload.i ?? -1] ?? "(no answer)"}`;
+  }
+
+  /** Milliseconds since the interaction row became visible (0 when unknown). */
+  private elapsedSinceRendered(record: PendingRecord): number {
+    return record.renderedAt !== null ? Date.now() - record.renderedAt : 0;
   }
 
   private async applyInteraction(
@@ -532,6 +609,26 @@ export class BridgeRuntime {
       });
       return;
     }
+    const durationMs = this.elapsedSinceRendered(record);
+    // Multi-select Submit: report the checked set structurally (option text may
+    // itself contain commas, so a joined `answer` alone is ambiguous).
+    if (payload.a === "s") {
+      const selected = this.pending.selectedOptions(record);
+      await this.dispatch(session, {
+        type: "addToolResult",
+        toolCallId: record.pending.toolCallId,
+        output: {
+          question: record.pending.question,
+          answer: selected.length > 0 ? selected.join(", ") : "(no answer)",
+          hasOptions: record.pending.options.length > 0,
+          multiSelect: true,
+          ...(selected.length > 0 ? { selected } : {}),
+          durationMs,
+          cachedOutputPath: null,
+        },
+      });
+      return;
+    }
     const option = record.pending.options[payload.i ?? -1] ?? "(no answer)";
     await this.dispatch(session, {
       type: "addToolResult",
@@ -540,7 +637,8 @@ export class BridgeRuntime {
         question: record.pending.question,
         answer: option,
         hasOptions: record.pending.options.length > 0,
-        durationMs: this.config.approvalTtlMs,
+        multiSelect: false,
+        durationMs,
         cachedOutputPath: null,
       },
     });
@@ -601,6 +699,7 @@ export class BridgeRuntime {
             question: record.pending.question,
             answer: "(timed out)",
             hasOptions: record.pending.options.length > 0,
+            multiSelect: record.pending.multiSelect,
             durationMs: this.config.approvalTtlMs,
             cachedOutputPath: null,
           },
@@ -665,10 +764,4 @@ export async function createImBridge(options: BridgeRuntimeOptions): Promise<Bri
     }
   }
   return new BridgeRuntime({ ...options, config, host });
-}
-
-/** Outcome label shown on the interaction row right after an answer. */
-function outcomeFor(pending: PendingInteraction, payload: NonNullable<ReturnType<typeof decodeButtonPayload>>): string {
-  if (pending.kind === "approval") return payload.a === "y" ? "✓ approved" : "✗ denied";
-  return `▸ ${pending.options[payload.i ?? -1] ?? "(no answer)"}`;
 }
