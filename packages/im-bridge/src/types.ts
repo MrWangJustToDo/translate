@@ -29,6 +29,19 @@ export interface AdapterCaps {
   streaming: "edit" | "native" | "append" | "none";
 }
 
+/**
+ * An inbound attachment an adapter downloaded and handed to the runtime as a
+ * model-ready data URL (no upload round-trip: the agent server receives it
+ * inline in the dispatch body, exactly like a CLI/extension pasted image).
+ */
+export interface InboundAttachment {
+  type: "image";
+  /** `data:<mime>;base64,…` */
+  dataUrl: string;
+  mediaType: string;
+  filename: string;
+}
+
 /** Normalized inbound message produced by an adapter. */
 export interface InboundMessage {
   platform: string;
@@ -37,6 +50,8 @@ export interface InboundMessage {
   /** Bridge-level slash command name (without slash) when the message is one; undefined for plain text. */
   command?: "new" | "stop";
   text: string;
+  /** Images attached to the message (may be empty; may accompany a caption or stand alone). */
+  attachments?: InboundAttachment[];
   /** Raw platform payload for adapter-specific inspection. */
   raw: unknown;
 }

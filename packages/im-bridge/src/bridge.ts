@@ -2,12 +2,13 @@
  * BridgeRuntime — wires a {@link ChatAdapter} onto AgentSessions.
  *
  * Inbound:  message → allowlist → session resolver → dispatch send/steer
- *           (steer while the agent pump is running, send when idle).
- * Outbound: subscribe messages/state per reply cycle → RunRenderer posts each
- *           run segment (assistant text / tool line) as its own message in
- *           actual part order — no streaming edits; only interaction messages
- *           (approval / ask_user, whose buttons ride on the tool call's own
- *           message) update in place once answered.
+ *           (steer while the agent pump is running, send when idle). Images the
+ *           adapter downloaded ride along as multimodal `ContentPart[]`.
+ * Outbound: subscribe messages/state per reply cycle → RunRenderer posts
+ *           assistant text as its own message and collapses consecutive tool
+ *           calls into ONE message edited in place (see RunRenderer) — in
+ *           actual part order. Interaction messages (approval / ask_user, whose
+ *           buttons ride on the tool call's own message) update in place too.
  *
  * The runtime is transport-agnostic: adapters translate platforms, the runtime
  * owns orchestration. Sessions are remote (`createRemoteAgentSessionHost`) by
@@ -29,7 +30,7 @@ import { RunRenderer } from "./streaming/run-renderer.js";
 import type { BridgeConfig } from "./config.js";
 import type { ButtonCallback, ChatAdapter, ChatTarget, InboundMessage } from "./types.js";
 import type { AgentSession, AgentSessionCommand, AgentSessionHost } from "@my-agent/core";
-import type { UIMessage } from "@tanstack/ai";
+import type { ContentPart, UIMessage } from "@tanstack/ai";
 
 export interface BridgeRuntimeOptions {
   config: BridgeConfig;
@@ -169,6 +170,13 @@ export class BridgeRuntime {
         return;
       }
 
+      // The dispatch payload is assembled ONCE: plain text normally, a
+      // multimodal `ContentPart[]` when the message carries images (the same
+      // shape the app / CLI send for pasted images). An empty payload (sticker /
+      // voice / empty service message) would just burn a round-trip — drop it.
+      const content = toDispatchContent(msg);
+      if (typeof content === "string" && content.trim().length === 0) return;
+
       void this.adapter.setTyping?.(msg.chat).catch(() => {});
 
       const { session } = await this.resolveSession(msg);
@@ -185,14 +193,14 @@ export class BridgeRuntime {
         // would split one run across multiple chat messages AND re-register
         // its pending interactions as duplicate (dead) button rows — the old
         // buttons stay clickable-looking but resolve to "expired".
-        const steer = await this.dispatch(session, { type: "steer", content: msg.text });
+        const steer = await this.dispatch(session, { type: "steer", content });
         if (!steer.ok && (steer as { code?: string }).code === "not_found") {
           // Stale mapping (e.g. server restarted) — heal and start fresh
           // instead of silently swallowing every following message.
           this.resolver.invalidate(msg.platform, msg.chat);
           const healed = await this.resolveSession(msg);
           const cycle = this.beginReplyCycle(healed.session, msg);
-          if (cycle) await this.dispatch(healed.session, { type: "send", content: msg.text });
+          if (cycle) await this.dispatch(healed.session, { type: "send", content });
         }
         return;
       }
@@ -206,11 +214,11 @@ export class BridgeRuntime {
       const cycle = this.beginReplyCycle(session, msg);
       if (cycle === null) {
         // A cycle is already live (double-message race) — inject as steer.
-        await this.dispatch(session, { type: "steer", content: msg.text });
+        await this.dispatch(session, { type: "steer", content });
         return;
       }
 
-      const result = await this.dispatch(session, { type: "send", content: msg.text });
+      const result = await this.dispatch(session, { type: "send", content });
       if (!result.ok && result.code === "not_found") {
         // Stale mapping (e.g. server restarted) — retire the premature cycle,
         // heal and retry once.
@@ -218,7 +226,7 @@ export class BridgeRuntime {
         this.resolver.invalidate(msg.platform, msg.chat);
         const healed = await this.resolveSession(msg);
         const healedCycle = this.beginReplyCycle(healed.session, msg);
-        if (healedCycle) await this.dispatch(healed.session, { type: "send", content: msg.text });
+        if (healedCycle) await this.dispatch(healed.session, { type: "send", content });
         return;
       }
       if (!result.ok) {
@@ -735,6 +743,26 @@ function throwHostRequired(): never {
   throw new Error("BridgeRuntime requires a host (or use createImBridge which wires the remote host).");
 }
 
+/**
+ * Build the dispatch content for an inbound message: plain text when nothing is
+ * attached, otherwise a multimodal `ContentPart[]` (text + one image part per
+ * attachment). Mirrors the app layer's `toChatContent` so a Telegram photo
+ * reaches the model exactly like a pasted image from the CLI / extension.
+ */
+function toDispatchContent(msg: InboundMessage): string | ContentPart[] {
+  const attachments = msg.attachments ?? [];
+  if (attachments.length === 0) return msg.text;
+  const parts: ContentPart[] = [];
+  if (msg.text.trim().length > 0) parts.push({ type: "text", content: msg.text });
+  attachments.forEach((attachment, index) => {
+    parts.push({
+      type: "image",
+      source: { type: "url", value: attachment.dataUrl },
+      metadata: { mediaType: attachment.mediaType, filename: attachment.filename, imageIndex: index + 1 },
+    });
+  });
+  return parts;
+}
 /**
  * Create a bridge. Default wiring:
  * - `REMOTE_SESSION` set → remote host (the same session path as the CLI's

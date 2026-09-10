@@ -4,6 +4,10 @@
  * Translation only: normalizes messages/button clicks into bridge primitives
  * and maps outbound primitives onto the Telegram Bot API. Holds no agent state.
  *
+ * Inbound images (largest `photo` size, or an image `document`) are downloaded
+ * and handed over as base64 data URLs — Telegram file ids expire within
+ * minutes, so the download must happen while handling the message.
+ *
  * Loop prevention: messages from bots are never delivered. In group chats the
  * adapter is mention-only — text must @-mention the bot (or be a command
  * addressed to it) to reach the bridge.
@@ -17,6 +21,7 @@ import type {
   ButtonCallback,
   ChatAdapter,
   ChatTarget,
+  InboundAttachment,
   InboundMessage,
   SendOptions,
   SentMessageRef,
@@ -28,6 +33,8 @@ const NOT_MODIFIED_PATTERN = /message is not modified/i;
 const PARSE_ERROR_PATTERN = /can't parse entities/i;
 /** getMe can hang indefinitely on unreachable networks — cap it so startup fails fast. */
 const TG_INIT_TIMEOUT_MS = 10_000;
+/** Inbound images larger than this are skipped (base64 + inline JSON would balloon). */
+const TG_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 /** Bounded flood-control retry (mirrors grammY autoRetry): honor retry_after, capped. */
 const MAX_SEND_ATTEMPTS = 3;
 const FLOOD_WAIT_CAP_MS = 30_000;
@@ -128,12 +135,51 @@ interface RawChat {
   type: string;
 }
 
+interface RawPhotoSize {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+}
+
+interface RawDocument {
+  file_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 interface RawMessage {
   message_thread_id?: number;
   text?: string;
   caption?: string;
+  /** Telegram sends every resolution of a photo; the largest entry is picked. */
+  photo?: RawPhotoSize[];
+  document?: RawDocument;
   from?: { id: number; is_bot: boolean } | undefined;
   chat: RawChat;
+}
+
+/** File id of the message's image: the largest `photo`, or an image `document`. */
+function imageFileId(message: RawMessage): string | undefined {
+  const photos = message.photo;
+  if (photos && photos.length > 0) {
+    return photos.reduce((best, size) => ((size.file_size ?? 0) >= (best.file_size ?? 0) ? size : best)).file_id;
+  }
+  const document = message.document;
+  if (document && document.mime_type?.startsWith("image/")) return document.file_id;
+  return undefined;
+}
+
+/** Best-effort image mime: the document's declared type, else the file extension. */
+function imageMediaType(message: RawMessage, filePath: string): string {
+  if (message.document?.mime_type?.startsWith("image/")) return message.document.mime_type;
+  const extension = filePath.split(".").pop()?.toLowerCase();
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  return "image/jpeg";
 }
 
 function toTarget(chat: RawChat): ChatTarget {
@@ -171,6 +217,7 @@ export class TelegramAdapter implements ChatAdapter {
   };
 
   private readonly bot: Bot;
+  private readonly botToken: string;
   private readonly onError: (error: unknown) => void;
   private messageHandler: ((msg: InboundMessage) => Promise<void>) | null = null;
   private buttonHandler: ((cb: ButtonCallback) => Promise<void>) | null = null;
@@ -178,6 +225,7 @@ export class TelegramAdapter implements ChatAdapter {
 
   constructor(options: TelegramAdapterOptions) {
     this.onError = options.onError ?? (() => {});
+    this.botToken = options.botToken;
     this.bot = new Bot(options.botToken);
     this.bot.catch((error) => this.onError(error.error));
     this.registerHandlers();
@@ -295,12 +343,21 @@ export class TelegramAdapter implements ChatAdapter {
       // Group chats are mention-only: require an @-mention for both text and commands.
       if (!isPrivate && !this.mentionsBot(text)) return;
 
+      // Download attached images BEFORE handing off — Telegram file ids are
+      // short-lived. Best-effort: a failed download drops the attachment, never
+      // the whole message.
+      const attachments = await this.collectAttachments(message).catch((error): InboundAttachment[] => {
+        this.onError(error);
+        return [];
+      });
+
       await handler({
         platform: this.platform,
         chat: target,
         userId: String(message.from?.id ?? ""),
         ...(command !== undefined ? { command } : {}),
         text,
+        ...(attachments.length > 0 ? { attachments } : {}),
         raw: ctx.message,
       });
     });
@@ -334,6 +391,30 @@ export class TelegramAdapter implements ChatAdapter {
     // In groups, `/new@OtherBot` belongs to another bot — ignore it.
     if (!isPrivate && addressedTo && addressedTo !== this.bot.botInfo?.username) return undefined;
     return name as InboundMessage["command"];
+  }
+
+  /**
+   * Download the message's image (if any) and return it as a data URL. Returns
+   * an empty list for text-only messages, oversized files and non-image
+   * documents; throws only on transport failures (caught by the caller).
+   */
+  private async collectAttachments(message: RawMessage): Promise<InboundAttachment[]> {
+    const fileId = imageFileId(message);
+    if (!fileId) return [];
+    const file = await this.bot.api.getFile(fileId);
+    if (!file.file_path) return [];
+    if (file.file_size !== undefined && file.file_size > TG_MAX_IMAGE_BYTES) {
+      this.onError(
+        new Error(`Telegram image skipped: ${file.file_size} bytes exceeds the ${TG_MAX_IMAGE_BYTES}-byte cap`)
+      );
+      return [];
+    }
+    const response = await fetch(`https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`);
+    if (!response.ok) throw new Error(`Telegram file download failed: HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const mediaType = imageMediaType(message, file.file_path);
+    const filename = message.document?.file_name ?? file.file_path.split("/").pop() ?? "image";
+    return [{ type: "image", dataUrl: `data:${mediaType};base64,${buffer.toString("base64")}`, mediaType, filename }];
   }
 
   private mentionsBot(text: string): boolean {

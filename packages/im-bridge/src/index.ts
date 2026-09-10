@@ -37,6 +37,7 @@ export type {
   ButtonPayload,
   ChatAdapter,
   ChatTarget,
+  InboundAttachment,
   InboundMessage,
   PendingInteraction,
   SendOptions,
