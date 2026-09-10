@@ -369,7 +369,7 @@ export class BridgeRuntime {
 
   /**
    * Register pending interactions as buttons ON their tool segment's message
-   * (the same message that shows `📎 … · ⏸ awaiting approval`). Registration
+   * (the same message that shows `… · ⏸ awaiting approval`). Registration
    * is synchronous before the renderer's post lands, so a button click can
    * never race the pending record's creation.
    */
@@ -651,10 +651,10 @@ export class BridgeRuntime {
    */
   private settleInteractionRow(record: PendingRecord, outcome: string): void {
     const pending = record.pending;
+    // No leading state glyph here: the outcome already carries `✓`/`✗` (approval)
+    // or `▸` (answer), so a second glyph would just read as noise.
     const line =
-      pending.kind === "approval"
-        ? `📎 ${pending.question} · ${outcome}`
-        : `📎 ask_user · ${pending.question} · ${outcome}`;
+      pending.kind === "approval" ? `${pending.question} · ${outcome}` : `ask_user · ${pending.question} · ${outcome}`;
     const renderer = this.cycles.get(record.chatKey)?.renderer;
     const settled = renderer?.settle(pending.segmentKey, line) ?? false;
     this.diag(

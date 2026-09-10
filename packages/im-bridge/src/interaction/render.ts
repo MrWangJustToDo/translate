@@ -11,9 +11,10 @@
  * - pending ask_user: `part.name === "ask_user" && part.state === "input-complete" && part.output === undefined`
  * - pending approval: `part.approval.needsApproval && part.approval.approved === undefined`
  *
- * Tool lines follow the opencode IM convention: `📎 tool · key input info · state`
- * (e.g. `📎 run_command · $ pnpm build · ✓`) — the input summary is the key
- * information, the state suffix is the lifecycle.
+ * Tool lines follow a status-first convention: `<state> tool · key input info`
+ * (e.g. `✓ run_command · $ pnpm build`) — the state glyph leads so consecutive
+ * lines scan as a status list instead of looking like file attachments (the old
+ * leading 📎 read as an attachment in Telegram).
  */
 
 import type { PendingInteraction } from "../types.js";
@@ -219,26 +220,36 @@ function resultHint(part: ToolCallPart): string {
   return "";
 }
 
-/** Compact status line for a tool call (`📎 run_command · $ pnpm build · ✓`). */
+/**
+ * Status glyphs. `\uFE0E` (VARIATION SELECTOR-15) forces TEXT presentation so
+ * `⏸`/`▶` render at the same size as the surrounding text instead of being
+ * upgraded to a larger colored emoji by the client's emoji font.
+ */
+const GLYPH_DONE = "✓";
+const GLYPH_FAILED = "✗";
+const GLYPH_AWAITING = "⏸\uFE0E";
+const GLYPH_RUNNING = "▶\uFE0E";
+
+/** Compact status line for a tool call (`✓ run_command · $ pnpm build`). */
 export function toolStatusLine(part: ToolCallPart): string {
   const label = toolLabel(part);
-  if (part.approval?.approved === false) return `📎 ${label} · ✗ denied`;
+  if (part.approval?.approved === false) return `${GLYPH_FAILED} ${label} · denied`;
   if (part.output !== undefined) {
     if (part.state === "error" || isFailedOutput(part)) {
       const excerpt = errorExcerpt(part);
-      return `📎 ${label} · ✗${excerpt ? ` ${excerpt}` : ""}`;
+      return `${GLYPH_FAILED} ${label}${excerpt ? ` · ${excerpt}` : ""}`;
     }
-    return `📎 ${label} · ✓${resultHint(part)}`;
+    return `${GLYPH_DONE} ${label}${resultHint(part)}`;
   }
   if (part.approval?.needsApproval && part.approval.approved === undefined) {
-    return `📎 ${label} · ⏸ awaiting approval`;
+    return `${GLYPH_AWAITING} ${label} · awaiting approval`;
   }
   // ask_user without options has no buttons — the only answer channel is a
   // plain reply, so say so on the row instead of a bare "running".
   if (part.name === ASK_USER_TOOL && askUserOptionCount(part) === 0) {
-    return `📎 ${label} · ⏳ reply with text`;
+    return `${GLYPH_RUNNING} ${label} · reply with text`;
   }
-  return `📎 ${label} · running`;
+  return `${GLYPH_RUNNING} ${label}`;
 }
 
 function askUserOptionCount(part: ToolCallPart): number {
@@ -296,7 +307,8 @@ export function toolSegmentKey(messageId: string, partIndex: number, partId: str
 /**
  * Project the current run onto ordered outbound segments — assistant text and
  * tool status lines alternate exactly as the app's message view renders them.
- * The renderer posts each segment as its own chat message in this order.
+ * RunRenderer collapses consecutive tool segments into one message; text
+ * segments always stay their own message.
  */
 export function renderRunSegments(messages: UIMessage[]): RunSegment[] {
   const segments: RunSegment[] = [];
@@ -314,7 +326,7 @@ export function renderRunSegments(messages: UIMessage[]): RunSegment[] {
       } else if (isToolCallPart(part)) {
         // Only post an ask_user row once its args are complete — a mid-stream
         // part (args still arriving) would otherwise render as a bare
-        // `📎 ask_user · running` with no question and no buttons.
+        // `▶ ask_user` with no question and no buttons.
         const pending =
           (part.name === ASK_USER_TOOL && part.state === "input-complete" && part.output === undefined) ||
           (part.approval?.needsApproval === true && part.approval.approved === undefined);

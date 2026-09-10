@@ -3,17 +3,26 @@
  *
  * Projects the run's UIMessage parts IN ORDER onto one chat message per
  * segment (`renderRunSegments`): assistant text and tool status lines appear
- * exactly as the app's message view renders them, instead of bunching every
- * tool line into a single progress row.
+ * exactly as the app's message view renders them.
  *
+ * Tool lines are GROUPED: consecutive tool calls (nothing but more tool calls
+ * between them) share ONE message that is edited in place as they complete,
+ * instead of one bubble per call. Adjacent-only merging keeps the posted
+ * message order identical to the run's part order (text / group / text / group
+ * …), so nothing reorders. An interaction (approval / ask_user, whose buttons
+ * ride its own message) is never merged and terminally splits the groups
+ * around it; once a tool has been an interaction it stays pinned standalone so
+ * a group can never re-absorb it (which would duplicate its line).
  * Deliberately NOT streaming — IM in-place edit streams render poorly and
  * burn rate limits:
  * - text segments post once, complete, as soon as they are sealed (a later
  *   part exists) — the final answer lands via `finalize()` at run end;
- * - tool segments post once when done; running tools wait;
- * - the ONLY in-place updates are interaction messages: an approval /
- *   ask_user posts immediately with its buttons riding on the tool call's own
- *   message, and is edited (buttons dropped, final line) when resolved.
+ * - tool GROUPS post once every member is done, then re-edit as later members
+ *   append lines; a running tool never freezes mid-state;
+ * - the ONLY in-place updates are tool groups (lines append) and interaction
+ *   messages: an approval / ask_user posts immediately with its buttons riding
+ *   on the tool call's own message, and is edited (buttons dropped, final line)
+ *   when resolved.
  *
  * The "⏳" placeholder message is claimed (edited in place) by the first
  * posted segment, so the reply reads top-down without a dangling hourglass.
@@ -26,7 +35,7 @@
  * a long run's tool-line backlog can delay the row, never silently expire it.
  */
 
-import { renderRunSegments } from "../interaction/render.js";
+import { renderRunSegments, type RunSegment } from "../interaction/render.js";
 
 import { splitMessage } from "./splitter.js";
 
@@ -51,9 +60,11 @@ export interface RunRendererOptions {
 }
 
 interface SegmentState {
-  /** Stable identity: tool parts key by `tool:<partId>`, text by `${message.id}:${partIndex}`. */
+  /** Stable identity: tool parts key by `tool:<partId>`, text by `${message.id}:${partIndex}`, tool groups by `group:<first member key>`. */
   key: string;
   kind: "text" | "tool";
+  /** Tool only: a collapsed run of consecutive tool calls sharing one message (interactions are never grouped, so a group never carries buttons). */
+  group: boolean;
   /** Latest rendered text. */
   text: string;
   buttons?: Button[];
@@ -75,6 +86,16 @@ interface SegmentState {
   lastButtons?: Button[];
 }
 
+/** One projected outbound unit: a text part, a lone interaction tool, or a collapsed tool group. */
+interface RunRow {
+  key: string;
+  kind: "text" | "tool";
+  text: string;
+  done: boolean;
+  pending: boolean;
+  group: boolean;
+}
+
 export class RunRenderer {
   private readonly adapter: ChatAdapter;
   private readonly chat: ChatTarget;
@@ -85,6 +106,12 @@ export class RunRenderer {
 
   /** Insertion order = first-appearance order = the run's actual part order. */
   private readonly segments = new Map<string, SegmentState>();
+  /**
+   * Tool segment keys that have ever been an interaction (pending approval /
+   * ask_user). They are pinned to their own message forever: a group must never
+   * re-absorb a resolved interaction, or its line would exist twice.
+   */
+  private readonly standaloneToolKeys = new Set<string>();
   /**
    * The single ordered outbound queue. Every send/edit appends here, so the
    * transcript mirrors the run's segment order exactly — interactions included.
@@ -110,33 +137,94 @@ export class RunRenderer {
    */
   sync(messages: UIMessage[]): void {
     if (this.closed) return;
-    const flat = renderRunSegments(messages);
-    for (let index = 0; index < flat.length; index++) {
-      const segment = flat[index];
-      let state = this.segments.get(segment.key);
+    const rows = this.collapse(renderRunSegments(messages));
+    const produced = new Set<string>();
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      produced.add(row.key);
+      let state = this.segments.get(row.key);
       if (state === undefined) {
         state = {
-          key: segment.key,
-          kind: segment.kind,
-          text: segment.text,
+          key: row.key,
+          kind: row.kind,
+          group: row.group,
+          text: row.text,
           sealed: false,
           awaitingResolution: false,
           settled: false,
-          done: segment.done,
-          pending: segment.pending,
+          done: row.done,
+          pending: row.pending,
           renderedNotified: false,
           ref: null,
           lastText: "",
         };
-        this.segments.set(segment.key, state);
+        this.segments.set(row.key, state);
       }
       // Never regress to empty; later parts only ever append.
-      if (segment.text.length > 0) state.text = segment.text;
-      state.done = segment.done;
-      state.pending = segment.pending;
-      if (segment.kind === "text" && index < flat.length - 1) state.sealed = true;
+      if (row.text.length > 0) state.text = row.text;
+      state.done = row.done;
+      state.pending = row.pending;
+      state.group = row.group;
+      if (row.kind === "text" && index < rows.length - 1) state.sealed = true;
     }
+    this.pruneUnreferencedGroups(produced);
     this.reconcile();
+  }
+
+  /**
+   * Collapse consecutive non-interactive tool segments into ONE tool group row.
+   *
+   * Order is preserved because only ADJACENT tool segments merge — a text part
+   * still breaks the sequence, so the posted message order stays exactly the
+   * run's part order (text / group / text / group …).
+   *
+   * An interaction (pending approval / ask_user) is emitted standalone (its
+   * buttons need their own message) and terminally splits the groups around it;
+   * {@link standaloneToolKeys} pins it so it is never merged afterwards.
+   */
+  private collapse(flat: RunSegment[]): RunRow[] {
+    const rows: RunRow[] = [];
+    let current: RunRow | null = null;
+    for (const segment of flat) {
+      if (segment.kind === "text") {
+        current = null;
+        rows.push({ ...segment, group: false });
+        continue;
+      }
+      if (segment.pending || this.standaloneToolKeys.has(segment.key)) {
+        this.standaloneToolKeys.add(segment.key);
+        current = null;
+        rows.push({ ...segment, group: false });
+        continue;
+      }
+      if (current === null) {
+        current = {
+          key: `group:${segment.key}`,
+          kind: "tool",
+          text: segment.text,
+          done: segment.done,
+          pending: false,
+          group: true,
+        };
+        rows.push(current);
+        continue;
+      }
+      current.text = `${current.text}\n${segment.text}`;
+      current.done = current.done && segment.done;
+    }
+    return rows;
+  }
+
+  /**
+   * Drop unposted group rows that vanished from the projection. A group member
+   * turning into an interaction splits the group, orphaning the never-posted
+   * group object (the interaction gets its own `tool:<id>` row instead). Posted
+   * rows are kept as history.
+   */
+  private pruneUnreferencedGroups(produced: Set<string>): void {
+    for (const [key, state] of this.segments) {
+      if (state.group && state.ref === null && !produced.has(key)) this.segments.delete(key);
+    }
   }
 
   /**
@@ -215,7 +303,9 @@ export class RunRenderer {
               segment.ref = await this.post(chunk, undefined);
             }
           } else if (segment.ref === null) {
-            this.postSegment(segment);
+            await this.postSegment(segment);
+          } else if (segment.group) {
+            if (segment.text !== segment.lastText) await this.editSegment(segment);
           } else if ((segment.awaitingResolution || segment.settled) && segment.done) {
             await this.editSegment(segment);
             segment.awaitingResolution = false;
@@ -291,15 +381,29 @@ export class RunRenderer {
       return;
     }
     if (segment.ref === null) {
+      const isInteraction = segment.buttons !== undefined;
+      // A tool GROUP posts only once EVERY member is done: a still-running
+      // member must not freeze a partial line, and a member that turns into an
+      // interaction instead gets its own row (the group then splits).
+      if (segment.group) {
+        if (!segment.done && !isInteraction) return;
+        await this.postSegment(segment);
+        return;
+      }
       // Post immediately when an interaction needs buttons; otherwise wait
       // for completion so a "running" line never freezes mid-state.
       // An interaction (buttons attached) is ALWAYS awaiting its user answer
       // even if the projection momentarily reads `done` (the r1 race: the
       // part resolved between setButtons and the flush) — button + await so
       // a subsequent click can always settle the row.
-      const isInteraction = segment.buttons !== undefined;
       if (!isInteraction && !segment.pending && !segment.done) return;
       await this.postSegment(segment);
+      return;
+    }
+    // A posted group appends its members' lines as they complete.
+    if (segment.group) {
+      if (!segment.done || segment.text === segment.lastText) return;
+      await this.editSegment(segment);
       return;
     }
     // Skip only when the row is not an interaction AND wasn't settled AND has
