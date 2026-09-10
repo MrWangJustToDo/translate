@@ -3,6 +3,7 @@
  */
 
 import { splitStepSegments } from "../stream/extract-assistant-text.js";
+import { isToolCallPart } from "../stream/message-parts.js";
 
 import { BEGIN_SUMMARY_TOOL_NAME } from "./begin-summary-tool.js";
 
@@ -24,12 +25,6 @@ export interface DeriveSubagentRunStatsInput {
   output: string;
   aborted: boolean;
   status?: AgentStatus;
-}
-
-function isToolCallPart(
-  part: UIMessage["parts"][number]
-): part is UIMessage["parts"][number] & { type: "tool-call"; name?: string } {
-  return part.type === "tool-call";
 }
 
 /** Whether the subagent called {@link BEGIN_SUMMARY_TOOL_NAME} (explore natural end). */

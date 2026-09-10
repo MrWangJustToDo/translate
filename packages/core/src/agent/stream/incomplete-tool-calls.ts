@@ -12,13 +12,11 @@
  * - valid `input-complete` tools waiting for a normal tool-phase pump
  */
 
+import { isToolCallPart } from "./message-parts.js";
+
 import type { ToolCallPart, ToolResultPart, UIMessage } from "@tanstack/ai";
 
 export const TOOL_CANCELLED_MESSAGE = "Cancelled by user.";
-
-function isToolCallPart(part: UIMessage["parts"][number]): part is ToolCallPart {
-  return part.type === "tool-call";
-}
 
 function hasToolResult(message: UIMessage, toolCallId: string): boolean {
   return message.parts.some((part) => part.type === "tool-result" && part.toolCallId === toolCallId);

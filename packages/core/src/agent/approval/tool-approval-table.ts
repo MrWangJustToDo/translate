@@ -5,6 +5,8 @@
  * tool-call parts remain the transcript; this table feeds `resumeToolState`.
  */
 
+import { isToolCallPart } from "../stream/message-parts.js";
+
 import type { ToolApprovalRecord, ToolApprovalStatus } from "../persistence/types.js";
 import type { ToolApprovalResolution, ToolCallPart, UIMessage } from "@tanstack/ai";
 
@@ -16,10 +18,6 @@ export interface UpsertToolApprovalInput {
   updatedAt?: number;
   /** Tool name when the caller knows it — forwarded to the resolved callback. */
   toolName?: string;
-}
-
-function isToolCallPart(part: UIMessage["parts"][number]): part is ToolCallPart {
-  return part.type === "tool-call";
 }
 
 function statusRank(status: ToolApprovalStatus): number {

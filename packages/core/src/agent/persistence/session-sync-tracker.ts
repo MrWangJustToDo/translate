@@ -1,4 +1,5 @@
 import { isEmptyAssistantShell } from "../stream/empty-assistant-shell.js";
+import { isToolCallPart } from "../stream/message-parts.js";
 
 import type { ToolCallPart, UIMessage } from "@tanstack/ai";
 
@@ -111,10 +112,6 @@ export function computeSessionSyncSnapshot(messages: UIMessage[]): SessionSyncSn
     messageCount: messages.length,
     fingerprints: messages.map(fingerprintUIMessage),
   };
-}
-
-function isToolCallPart(part: UIMessage["parts"][number]): part is ToolCallPart {
-  return part.type === "tool-call";
 }
 
 /** Whether a UIMessage is free of mid-stream tool/structured parts (debug / tests). */

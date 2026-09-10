@@ -1,4 +1,5 @@
 import { findLastMeaningfulAssistant, isEmptyAssistantShell } from "./empty-assistant-shell.js";
+import { isToolCallPart, partTextContent } from "./message-parts.js";
 
 import type { AgentStatus } from "../../runtime-types/agent-status.js";
 import type { ModelMessage, ToolCallPart, ToolResultPart, UIMessage } from "@tanstack/ai";
@@ -10,20 +11,10 @@ function lastAssistantMessage(messages: UIMessage[]): UIMessage | undefined {
   return findLastMeaningfulAssistant(messages);
 }
 
-function isToolCallPart(part: { type?: string }): part is ToolCallPart {
-  return part.type === "tool-call";
-}
-
 function toolResultIdsForAssistant(assistant: UIMessage): Set<string> {
   return new Set(
     assistant.parts.filter((part): part is ToolResultPart => part.type === "tool-result").map((part) => part.toolCallId)
   );
-}
-
-function partTextContent(part: { type?: string; content?: unknown }): string {
-  if (part.type !== "text") return "";
-  if (typeof part.content === "string") return part.content;
-  return "";
 }
 
 function hasTextAfterTools(assistant: UIMessage): boolean {

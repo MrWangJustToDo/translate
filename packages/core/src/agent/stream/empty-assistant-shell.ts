@@ -1,3 +1,5 @@
+import { partTextContent } from "./message-parts.js";
+
 import type { UIMessage } from "@tanstack/ai";
 
 const MEANINGFUL_ASSISTANT_PART_TYPES = new Set([
@@ -7,12 +9,6 @@ const MEANINGFUL_ASSISTANT_PART_TYPES = new Set([
   "structured-output",
   "ui-resource",
 ]);
-
-function partTextContent(part: { type?: string; content?: unknown }): string {
-  if (part.type !== "text") return "";
-  if (typeof part.content === "string") return part.content;
-  return "";
-}
 
 /**
  * TanStack {@link StreamProcessor} may create an assistant UIMessage on
