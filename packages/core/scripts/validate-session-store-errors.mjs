@@ -169,6 +169,12 @@ assert.equal(loaded.name, "after-failure");
   // Expiring the reservation makes the session reusable again (crash self-heal).
   const loaded = await store.load(candidate.id);
   loaded.reservedAt = Date.now() - 6 * 60 * 1000; // older than the 5-min window
+  // The mock CoreEnv FS is in-memory (zero latency): without a real clock gap,
+  // this save can land in the same millisecond as earlier empty-session saves.
+  // list() sorts by updatedAt and V8's stable sort keeps readdir (insertion)
+  // order on ties, so an older empty session can beat `candidate`. Sleep past
+  // the ms boundary so candidate's updatedAt is strictly the newest.
+  await sleep(2);
   await store.save(loaded);
   const afterExpiry = await store.getLatestEmpty();
   assert.equal(afterExpiry.id, candidate.id, "expired reservation must be selectable again");
