@@ -34,3 +34,5 @@ export const useStatic = createState(
     withStableSelector: true,
   }
 );
+
+useStatic.getLifeCycle().syncUpdateComponent = true;
