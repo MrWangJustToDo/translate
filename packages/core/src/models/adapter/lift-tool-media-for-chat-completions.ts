@@ -1,8 +1,9 @@
 /**
  * Chat Completions wire format only allows string `tool` content. Multimodal
  * ContentPart[] in tool results would be JSON.stringified (base64-as-text) and
- * never become `image_url`. Rewrite: keep tool text as a string, then inject a
- * synthetic user message with image parts (universal OpenAI-compatible pattern).
+ * never become `image_url` / `input_audio`. Rewrite: keep tool text as a string,
+ * then inject a synthetic user message with image/audio parts (universal
+ * OpenAI-compatible pattern).
  *
  * Anthropic / Responses keep native multimodal tool results — do not use here.
  *
@@ -20,8 +21,8 @@ const MEDIA_FOLLOW_UP_TEXT = "[Media from tool result — inspect the attached c
 const OMITTED_NON_IMAGE =
   "[Omitted non-image media: Chat Completions cannot embed this type on the wire. Prefer a provider with native multimodal tool results, or summarize in text.]";
 
-function isLiftableImagePart(part: ContentPart): part is Extract<ContentPart, { type: "image" }> {
-  return part.type === "image";
+function isLiftableMediaPart(part: ContentPart): part is Extract<ContentPart, { type: "image" | "audio" }> {
+  return part.type === "image" || part.type === "audio";
 }
 
 /**
@@ -50,9 +51,9 @@ function asToolContentParts(content: ModelMessage["content"]): ContentPart[] | n
   return null;
 }
 
-function splitToolContentParts(parts: ContentPart[]): { text: string; images: ContentPart[] } {
+function splitToolContentParts(parts: ContentPart[]): { text: string; media: ContentPart[] } {
   const textChunks: string[] = [];
-  const images: ContentPart[] = [];
+  const media: ContentPart[] = [];
   let omittedNonImage = false;
 
   for (const part of parts) {
@@ -60,8 +61,8 @@ function splitToolContentParts(parts: ContentPart[]): { text: string; images: Co
       if (part.content) textChunks.push(part.content);
       continue;
     }
-    if (isLiftableImagePart(part)) {
-      images.push(part);
+    if (isLiftableMediaPart(part)) {
+      media.push(part);
       continue;
     }
     omittedNonImage = true;
@@ -74,51 +75,51 @@ function splitToolContentParts(parts: ContentPart[]): { text: string; images: Co
   }
 
   let text = textChunks.join("\n").trim();
-  if (!text && images.length > 0) {
+  if (!text && media.length > 0) {
     text = "Media attached in the following user message.";
   }
   if (!text) {
     text = "";
   }
 
-  return { text, images };
+  return { text, media };
 }
 
 /**
- * Rewrite ModelMessages so Chat Completions adapters never stringify image
- * base64 inside `role: "tool"`. Batches images from consecutive tool messages
+ * Rewrite ModelMessages so Chat Completions adapters never stringify image/audio
+ * base64 inside `role: "tool"`. Batches media from consecutive tool messages
  * into one trailing synthetic user message (avoids tool/user/tool interleaving).
  */
 export function liftToolMediaForChatCompletions(messages: ModelMessage[]): ModelMessage[] {
   const out: ModelMessage[] = [];
-  let pendingImages: ContentPart[] = [];
+  let pendingMedia: ContentPart[] = [];
 
-  const flushImages = () => {
-    if (pendingImages.length === 0) return;
+  const flushMedia = () => {
+    if (pendingMedia.length === 0) return;
     out.push({
       role: "user",
-      content: [{ type: "text", content: MEDIA_FOLLOW_UP_TEXT }, ...pendingImages],
+      content: [{ type: "text", content: MEDIA_FOLLOW_UP_TEXT }, ...pendingMedia],
     });
-    pendingImages = [];
+    pendingMedia = [];
   };
 
   for (const message of messages) {
     const toolParts = message.role === "tool" ? asToolContentParts(message.content) : null;
 
     if (toolParts) {
-      const { text, images } = splitToolContentParts(toolParts);
+      const { text, media } = splitToolContentParts(toolParts);
       out.push({
         ...message,
         content: text,
       });
-      pendingImages.push(...images);
+      pendingMedia.push(...media);
       continue;
     }
 
-    flushImages();
+    flushMedia();
     out.push(message);
   }
 
-  flushImages();
+  flushMedia();
   return out;
 }
