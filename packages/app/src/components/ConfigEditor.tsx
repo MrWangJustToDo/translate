@@ -1,9 +1,13 @@
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 
-import { COLORS } from "../theme/colors.js";
-import { listNavHint, newlineEnterLabel } from "../utils/keyboard-labels.js";
+import { useSize } from "../hooks/use-size.js";
+import { WelcomePanel, welcomeTierForWidth } from "../layout/WelcomePanel.js";
+import { BG, COLORS } from "../theme/colors.js";
+import { KeyLabel, listNavHint, newlineEnterLabel } from "../utils/keyboard-labels.js";
 
+import { FullBox } from "./FullBox.js";
+import { Spinner } from "./Spinner.js";
 import { TextInput } from "./TextInput.js";
 
 import type { ModelsConfig } from "@my-agent/core";
@@ -24,6 +28,9 @@ type StyleChoice = "openai" | "anthropic";
 export const STYLE_OPTIONS: readonly StyleChoice[] = ["openai", "anthropic"];
 
 type Step = "style" | "baseURL" | "apiKey" | "models" | "confirm";
+
+/** Ordered steps — drives the `Step N/M` progress indicator. */
+const STEP_ORDER: readonly Step[] = ["style", "baseURL", "apiKey", "models", "confirm"];
 
 export interface ConfigEditorProps {
   onDone: (config: ModelsConfig) => void;
@@ -81,6 +88,18 @@ function parseDraft(draft: Draft, parse: ConfigEditorProps["parseModelsConfig"])
   }
 }
 
+/** Confirm-step summary row — fixed-width label column, matching Help's layout. */
+const SummaryRow = ({ label, value }: { label: string; value: string }) => (
+  <Box>
+    <Box width={10}>
+      <Text color={COLORS.muted} dimColor>
+        {label}
+      </Text>
+    </Box>
+    <Text color={COLORS.text}>{value}</Text>
+  </Box>
+);
+
 export const ConfigEditor = ({ onDone, onCancel, saveModelsConfig, parseModelsConfig }: ConfigEditorProps) => {
   const [step, setStep] = useState<Step>("style");
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
@@ -88,6 +107,16 @@ export const ConfigEditor = ({ onDone, onCancel, saveModelsConfig, parseModelsCo
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // The editor renders before `Agent` (which normally initializes terminal
+  // size), so seed the shared size store here too.
+  useSize.getActions().useInitTerminalSize();
+  const screenWidth = useSize((s) => s.state.screenWidth);
+  const tier = welcomeTierForWidth(screenWidth);
+  const paddingX = tier === "narrow" ? 1 : 3;
+  const innerWidth = Math.max(0, screenWidth - paddingX * 2);
+  // Chrome (title + hints) collapses earlier than the logo so rows never crowd.
+  const compactChrome = screenWidth < 72;
 
   function commitText(): void {
     if (step === "baseURL") {
@@ -168,95 +197,150 @@ export const ConfigEditor = ({ onDone, onCancel, saveModelsConfig, parseModelsCo
     return;
   });
 
-  return (
-    <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color={COLORS.primary}>
-          My Agent — First-Run Model Configuration
-        </Text>
-        <Text dimColor> {step === "style" ? listNavHint("accept", "cancel") : "esc to cancel"}</Text>
-      </Box>
+  // ============================================================================
+  // Step chrome (title, progress, hint)
+  // ============================================================================
 
-      <Box flexDirection="column" marginTop={1}>
+  const stepNo = STEP_ORDER.indexOf(step) + 1;
+
+  const pageTitle = compactChrome ? "First-Run Setup" : "First-Run Model Configuration";
+
+  const stepTitle =
+    step === "style"
+      ? "Provider style"
+      : step === "baseURL"
+        ? compactChrome
+          ? "Base URL"
+          : `Base URL for the ${styleLabel(draft.style)} API`
+        : step === "apiKey"
+          ? compactChrome
+            ? "API key (optional)"
+            : "API key (empty to skip)"
+          : step === "models"
+            ? "Model ids"
+            : "Ready to write config";
+
+  const stepHint =
+    step === "style"
+      ? compactChrome
+        ? `(${KeyLabel.upDown} ${KeyLabel.enter} ${KeyLabel.esc})`
+        : listNavHint("accept", "cancel")
+      : step === "baseURL" || step === "apiKey"
+        ? compactChrome
+          ? `(${KeyLabel.enter} · ${KeyLabel.esc})`
+          : `(${KeyLabel.enter} to continue, ${KeyLabel.esc} to cancel)`
+        : step === "models"
+          ? compactChrome
+            ? `(${newlineEnterLabel()} · ${KeyLabel.enter} · ${KeyLabel.esc})`
+            : `(${newlineEnterLabel()} for newline, ${KeyLabel.enter} to continue, ${KeyLabel.esc} to cancel)`
+          : "";
+
+  const modelList = draft.modelsCsv
+    .split(/[,\n]/)
+    .map((m) => m.trim())
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <FullBox flexDirection="column">
+      <WelcomePanel variant="config" screenWidth={screenWidth} />
+
+      <Box flexDirection="column" paddingX={paddingX}>
+        <Text color={BG.border}>{"─".repeat(innerWidth)}</Text>
+
+        {/* Title + progress */}
+        <Box marginTop={1} justifyContent="space-between" width="100%" flexShrink={0}>
+          <Box flexShrink={1}>
+            <Text bold color={COLORS.primary} wrap="truncate">
+              {pageTitle}
+            </Text>
+          </Box>
+          <Text color={COLORS.muted} dimColor>
+            Step {stepNo}/{STEP_ORDER.length}
+          </Text>
+        </Box>
+
+        {/* Step name + hint */}
+        <Box justifyContent="space-between" width="100%" flexShrink={0}>
+          <Box flexShrink={1}>
+            <Text color={COLORS.text} wrap="truncate">
+              {stepTitle}
+            </Text>
+          </Box>
+          {stepHint ? (
+            <Text color={COLORS.muted} dimColor wrap="truncate">
+              {stepHint}
+            </Text>
+          ) : null}
+        </Box>
+
+        {/* Body */}
         {step === "style" && (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text>Provider style:</Text>
-            <Box flexDirection="column">
-              {STYLE_OPTIONS.map((s, i) => {
-                const selected = i === styleIndex;
-                return (
-                  <Box key={s} height={1} width="100%">
-                    <Text color={selected ? COLORS.text : COLORS.muted} bold={selected}>
-                      {selected ? "❯ " : "  "}
-                      {styleLabel(s)}
-                    </Text>
-                    {selected && (
-                      <Text color={COLORS.muted} dimColor>
-                        {"  (selected)"}
-                      </Text>
-                    )}
-                  </Box>
-                );
-              })}
-            </Box>
+          <Box flexDirection="column" marginTop={1}>
+            {STYLE_OPTIONS.map((s, i) => {
+              const selected = i === styleIndex;
+              return (
+                <Box key={s} height={1}>
+                  <Text color={selected ? COLORS.primary : undefined} bold={selected}>
+                    {selected ? "❯ " : "  "}
+                    {styleLabel(s)}
+                  </Text>
+                </Box>
+              );
+            })}
           </Box>
         )}
 
         {step === "baseURL" && (
-          <Box flexDirection="column">
-            <Text>Base URL for the {styleLabel(draft.style)} API:</Text>
+          <Box marginTop={1}>
             <TextInput value={text} onChange={setText} onSubmit={commitText} placeholder="https://..." />
           </Box>
         )}
 
         {step === "apiKey" && (
-          <Box flexDirection="column">
-            <Text>API key (empty to skip):</Text>
+          <Box marginTop={1}>
             <TextInput value={text} onChange={setText} onSubmit={commitText} placeholder="(none)" mask />
           </Box>
         )}
 
         {step === "models" && (
-          <Box flexDirection="column">
-            <Text>Model ids (one per line, e.g. gpt-4o):</Text>
+          <Box marginTop={1}>
             <TextInput value={text} onChange={setText} onSubmit={commitText} placeholder="gpt-4o" />
-            <Text dimColor>{newlineEnterLabel()} for newline · Enter to continue</Text>
           </Box>
         )}
 
         {step === "confirm" && (
-          <Box flexDirection="column">
-            <Text bold>Ready to write config:</Text>
-            <Text>
-              {"  style:   "}
-              {styleLabel(draft.style)}
-            </Text>
-            <Text>
-              {"  baseURL: "}
-              {draft.baseURL.trim() || "(none)"}
-            </Text>
-            <Text>
-              {"  apiKey:  "}
-              {draft.apiKey.trim() ? "••••" : "(none)"}
-            </Text>
-            <Text>
-              {"  models:  "}
-              {draft.modelsCsv
-                .split(/[,\n]/)
-                .map((m) => m.trim())
-                .filter(Boolean)
-                .join(", ")}
-            </Text>
-            <Box marginTop={1}>
-              <Text color={COLORS.primary}>Enter to save &amp; start</Text>
-              <Text dimColor> · e to edit</Text>
+          <>
+            <Box flexDirection="column" marginTop={1}>
+              <SummaryRow label="style" value={styleLabel(draft.style)} />
+              <SummaryRow label="baseURL" value={draft.baseURL.trim() || "(none)"} />
+              <SummaryRow label="apiKey" value={draft.apiKey.trim() ? "••••" : "(none)"} />
+              <SummaryRow label="models" value={modelList} />
             </Box>
-          </Box>
+
+            <Box flexDirection="column" marginTop={1}>
+              <Text color={BG.border}>{"─".repeat(innerWidth)}</Text>
+              <Box marginTop={1}>
+                <Text color={COLORS.primary}>{KeyLabel.enter} to save &amp; start</Text>
+                <Text dimColor>
+                  {compactChrome ? ` · e edit · ${KeyLabel.esc} cancel` : ` · e to edit · ${KeyLabel.esc} to cancel`}
+                </Text>
+              </Box>
+            </Box>
+          </>
         )}
 
-        {saving && <Text dimColor>Saving config…</Text>}
-        {error && <Text color={COLORS.danger}>✖ {error}</Text>}
+        {saving && (
+          <Box marginTop={1}>
+            <Spinner text="Saving config…" />
+          </Box>
+        )}
+        {error && (
+          <Box marginTop={1}>
+            <Text color={COLORS.danger}>✖ {error}</Text>
+          </Box>
+        )}
       </Box>
-    </Box>
+    </FullBox>
   );
 };
