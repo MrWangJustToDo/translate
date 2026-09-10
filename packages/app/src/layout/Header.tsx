@@ -1,65 +1,12 @@
-import { Box, Text } from "ink";
 import { useEffect, useMemo } from "react";
 
-import { FullBox } from "../components/FullBox";
 import { useAgent } from "../hooks/use-agent";
 import { useConfig } from "../hooks/use-config";
 import { useSize } from "../hooks/use-size.js";
 import { useStatic } from "../hooks/use-static";
 import { useWorkspaceInfo } from "../hooks/use-workspace-info";
-import { COLORS } from "../theme/colors.js";
-import { getGradientStops, interpolateColor } from "../utils/gradient.js";
-import { headerShortcutTips } from "../utils/keyboard-labels.js";
-import { type WorkspaceGitInfo } from "../utils/workspace-git-info.js";
 
-// ============================================================================
-// ASCII Logo
-// ============================================================================
-
-// prettier-ignore
-const LOGO_LINES = [
-  " █▀▄▀█ █ █   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀",
-  " █ ▀ █ ▀▄▀   █▀█ █▄█ ██▄ █ ▀█  █ ",
-];
-
-/** Hide workspace/git + tips when the terminal is too narrow to render them on one line. */
-const HEADER_META_MIN_WIDTH = 80;
-
-// ============================================================================
-// GradientText — per-character horizontal gradient using only <Text>
-// ============================================================================
-
-const GradientLine = ({
-  text,
-  stops,
-  rowOffset,
-}: {
-  text: string;
-  stops: string[] | readonly string[];
-  rowOffset: number;
-}) => {
-  const chars = useMemo(() => {
-    const totalLen = LOGO_LINES[0].length;
-    return [...text].map((ch, i) => ({
-      ch,
-      color: ch.trim() ? interpolateColor(stops, (i + rowOffset * 0.3) / totalLen) : undefined,
-    }));
-  }, [text, stops, rowOffset]);
-
-  return (
-    <Text>
-      {chars.map((c, i) => (
-        <Text key={i} color={c.color}>
-          {c.ch}
-        </Text>
-      ))}
-    </Text>
-  );
-};
-
-// ============================================================================
-// Logo Component
-// ============================================================================
+import { WelcomePanel } from "./WelcomePanel.js";
 
 /** Remote planes active for this session (rendered as a badge under the logo title). */
 export function remotePlanesFromConfig(remoteEnv?: string, remoteProvider?: string, remoteSession?: string): string[] {
@@ -70,116 +17,14 @@ export function remotePlanesFromConfig(remoteEnv?: string, remoteProvider?: stri
   ];
 }
 
-const Logo = ({ remotePlanes, sessionCount }: { remotePlanes: string[]; sessionCount: number }) => {
-  return (
-    <Box flexDirection="column" alignItems="center" width="100%">
-      <Box flexDirection="column">
-        {LOGO_LINES.map((line, i) => (
-          <GradientLine key={i} text={line} stops={getGradientStops()} rowOffset={i} />
-        ))}
-      </Box>
-
-      <Box marginTop={1}>
-        <Text color={COLORS.accent} italic>
-          AI-Powered Coding Agent
-        </Text>
-      </Box>
-
-      {(remotePlanes.length > 0 || sessionCount > 1) && (
-        <Box marginTop={1}>
-          <Text color={COLORS.warning} dimColor>
-            {[...remotePlanes, ...(sessionCount > 1 ? [`${sessionCount} sessions`] : [])].join(" · ")}
-          </Text>
-        </Box>
-      )}
-    </Box>
-  );
-};
-
-// ============================================================================
-// Tips
-// ============================================================================
-
-const TIPS = headerShortcutTips();
-
-// ============================================================================
-// Git / workspace line
-// ============================================================================
-
-/** Single-line meta row — no flex children that wrap mid-token at narrow widths. */
-const GitInfoLine = ({ git, workspacePath }: { git: WorkspaceGitInfo | null; workspacePath: string }) => {
-  const showSha = Boolean(git?.shortSha) && git != null && !git.branch.includes(git.shortSha);
-  const branch = git ? `${git.branch}${git.dirty ? "*" : ""}` : "";
-
-  return (
-    <Box marginTop={1} justifyContent="center" width="100%" flexShrink={0}>
-      <Text wrap="truncate">
-        {workspacePath ? (
-          <Text color={COLORS.muted} dimColor>
-            {workspacePath}
-          </Text>
-        ) : null}
-        {workspacePath && git ? (
-          <Text color={COLORS.muted} dimColor>
-            {" · "}
-          </Text>
-        ) : null}
-        {git ? (
-          <>
-            <Text color={COLORS.muted} dimColor>
-              git{" "}
-            </Text>
-            <Text color={COLORS.primary}>{branch}</Text>
-            {showSha ? (
-              <Text color={COLORS.muted} dimColor>
-                {" · "}
-                {git.shortSha}
-              </Text>
-            ) : null}
-          </>
-        ) : null}
-      </Text>
-    </Box>
-  );
-};
-
-function buildHeader(
-  git: WorkspaceGitInfo | null,
-  workspacePath: string,
-  showMeta: boolean,
-  remotePlanes: string[],
-  sessionCount: number
-) {
-  return (
-    <FullBox flexDirection="column" key="header" marginBottom={1} paddingX={3} paddingY={1}>
-      <Logo remotePlanes={remotePlanes} sessionCount={sessionCount} />
-      {showMeta && (workspacePath || git) && <GitInfoLine git={git} workspacePath={workspacePath} />}
-
-      {showMeta && (
-        <>
-          <Box height={1} />
-
-          {/* Tips bar — only when wide enough to keep each tip on one line */}
-          <Box gap={3} justifyContent="center" width="100%" flexShrink={0}>
-            {TIPS.map((tip, i) => (
-              <Box key={i} gap={1} flexShrink={0}>
-                <Text color={COLORS.muted}>{tip.key}</Text>
-                <Text color={COLORS.muted} dimColor>
-                  {tip.desc}
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        </>
-      )}
-    </FullBox>
-  );
-}
-
 // ============================================================================
 // Header Component
 // ============================================================================
 
+/**
+ * Side-effect-only renderer: builds the welcome panel and pushes it into Ink's
+ * static output so it is written once at the top of the scrollback.
+ */
 export const Header = () => {
   const screenWidth = useSize((s) => s.state.screenWidth);
   const { git, path: workspacePath } = useWorkspaceInfo((s) => s.workspaceInfo);
@@ -195,10 +40,18 @@ export const Header = () => {
 
   useEffect(() => {
     if (!workspacePath) return;
-    const showMeta = screenWidth >= HEADER_META_MIN_WIDTH;
     useStatic
       .getActions()
-      .setStaticHeader(buildHeader(git || null, workspacePath, showMeta, remotePlanes, sessionCount));
+      .setStaticHeader(
+        <WelcomePanel
+          variant="ready"
+          screenWidth={screenWidth}
+          git={git || null}
+          workspacePath={workspacePath}
+          remotePlanes={remotePlanes}
+          sessionCount={sessionCount}
+        />
+      );
   }, [git, workspacePath, screenWidth, remotePlanes, sessionCount]);
 
   return null;

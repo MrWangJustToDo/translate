@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 
 import { ExtensionConfirm } from "../components/ExtensionConfirm.js";
 import { ExtensionPanel } from "../components/ExtensionPanel.js";
@@ -7,7 +7,6 @@ import { FullBox } from "../components/FullBox.js";
 import { MessageViewWithCompact } from "../components/MessageListWithCompact.js";
 import { PlanReadyBanner } from "../components/PlanReadyBanner.js";
 import { SessionResumePicker } from "../components/SessionResumePicker.js";
-import { Spinner } from "../components/Spinner.js";
 import { SubagentPanel } from "../components/SubagentPanel.js";
 import { WorkspacePanel } from "../components/WorkspacePanel.js";
 import { useAdapter } from "../context/adapter-context.js";
@@ -24,7 +23,7 @@ import { useWorkspaceView } from "../hooks/use-workspace-view.js";
 import { Content } from "../layout/Content.js";
 import { Footer } from "../layout/Footer.js";
 import { Header } from "../layout/Header.js";
-import { COLORS } from "../theme/colors.js";
+import { WelcomePanel } from "../layout/WelcomePanel.js";
 
 import type { AppConfig } from "../adapter/types.js";
 
@@ -36,6 +35,7 @@ export const Agent = () => {
   const adapter = useAdapter();
 
   useSize.getActions().useInitTerminalSize();
+  const screenWidth = useSize((s) => s.state.screenWidth);
 
   useStatic.getActions().useInitStdout();
 
@@ -108,22 +108,11 @@ export const Agent = () => {
   // ============================================================================
 
   if (initError) {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text color={COLORS.danger} bold>
-          Initialization Error:
-        </Text>
-        <Text color={COLORS.danger}>{initError.message}</Text>
-      </Box>
-    );
+    return <WelcomePanel variant="error" screenWidth={screenWidth} errorMessage={initError.message} />;
   }
 
   if (initLoading) {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Spinner text="Initializing sandbox..." />
-      </Box>
-    );
+    return <WelcomePanel variant="loading" screenWidth={screenWidth} loadingText="Initializing sandbox…" />;
   }
 
   if (showResumePicker && activeSession) {
