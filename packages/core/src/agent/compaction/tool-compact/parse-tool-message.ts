@@ -1,18 +1,8 @@
+import { isContentPartArray } from "@tanstack/ai";
+
 import { serializeToolMessageContent } from "../message-utils.js";
 
 import type { ContentPart, ModelMessage } from "@tanstack/ai";
-
-const CONTENT_PART_TYPES = new Set(["text", "image", "audio", "video", "document"]);
-
-function isContentPart(value: unknown): value is ContentPart {
-  if (typeof value !== "object" || value === null) return false;
-  const part = value as Record<string, unknown>;
-  return typeof part.type === "string" && CONTENT_PART_TYPES.has(part.type);
-}
-
-function isContentPartArray(value: unknown): value is ContentPart[] {
-  return Array.isArray(value) && value.length > 0 && value.every(isContentPart);
-}
 
 /** Normalize tool output for ModelMessage `content` (string or ContentPart[]). */
 export function normalizeModelToolContent(result: unknown): string | ContentPart[] {
