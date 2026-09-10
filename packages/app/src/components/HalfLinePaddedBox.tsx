@@ -13,7 +13,7 @@ export interface HalfLinePaddedBoxProps {
   transparentBody?: boolean;
   /** Content width override (defaults to screenWidth) */
   width?: number;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 /**

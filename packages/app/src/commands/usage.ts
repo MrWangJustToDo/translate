@@ -1,7 +1,10 @@
+import { Box } from "ink";
 import { createElement } from "react";
 
+import { HalfLinePaddedBox } from "../components/HalfLinePaddedBox.js";
 import { UsageHeatmap } from "../components/UsageHeatmap.js";
 import { useConfig } from "../hooks/use-config.js";
+import { BG } from "../theme/colors.js";
 
 import { registerCommand } from "./utils/registry.js";
 
@@ -195,7 +198,11 @@ registerCommand({
     try {
       const global = await fetchGlobalHistory(ctx, weeks);
       if (global) {
-        graphNode = createElement(UsageHeatmap, { daily: global.daily, weeks });
+        graphNode = createElement(
+          HalfLinePaddedBox,
+          { backgroundColor: BG.message },
+          createElement(Box, { paddingLeft: 1 }, createElement(UsageHeatmap, { daily: global.daily, weeks }))
+        );
         lines.push(...renderGlobalStats(global.daily, global.models, weeks));
       }
     } catch {

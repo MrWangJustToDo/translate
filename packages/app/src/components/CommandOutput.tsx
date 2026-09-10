@@ -40,11 +40,7 @@ export const CommandOutput = () => {
         scrollOffset={scrollOffset}
         renderItem={renderLine}
       />
-      {node && (
-        <Box marginTop={1} marginBottom={1}>
-          {node}
-        </Box>
-      )}
+      {node}
     </Box>
   );
 };
