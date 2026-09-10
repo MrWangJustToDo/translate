@@ -111,64 +111,37 @@ function describeContentPart(part: ContentPart): string {
   }
 }
 
+function findUserMessage(messages: Array<UIMessage | ModelMessage>, from: "first" | "last") {
+  if (from === "last") {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]!;
+      if (message.role === "user") return message;
+    }
+  } else {
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i]!;
+      if (message.role === "user") return message;
+    }
+  }
+  return null;
+}
+
+/** Text of a user message: `parts` for UIMessage, `content` for ModelMessage. */
+function userMessageText(message: UIMessage | ModelMessage): string {
+  if ("parts" in message && Array.isArray(message.parts)) {
+    return message.parts.map((part) => (part.type === "text" ? part.content : "")).join("\n");
+  }
+  return extractTextFromContent((message as ModelMessage).content);
+}
+
+/** Latest user message converted to ModelMessage[]. */
 export const getLatestUserMessage = (messages: Array<UIMessage | ModelMessage>) => {
-  let item: ModelMessage | UIMessage | null = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role === "user") {
-      item = message;
-      break;
-    }
-  }
-  if (!item) return null;
-  return convertMessagesToModelMessages([item]);
+  const item = findUserMessage(messages, "last");
+  return item ? convertMessagesToModelMessages([item]) : null;
 };
 
-export const gatLatestUserInput = (messages: Array<UIMessage | ModelMessage>) => {
-  let item: ModelMessage | UIMessage | null = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role === "user") {
-      item = message;
-      break;
-    }
-  }
-  if (!item) return "";
-  const typedItem = item as UIMessage;
-  if (typedItem.parts) {
-    return typedItem.parts.map((i) => (i.type === "text" ? i.content : "")).join("\n");
-  } else {
-    return extractTextFromContent((item as ModelMessage)["content"]);
-  }
-};
-
-export const getFirstUserMessage = (messages: Array<UIMessage | ModelMessage>) => {
-  let item: ModelMessage | UIMessage | null = null;
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message.role === "user") {
-      item = message;
-      break;
-    }
-  }
-  if (!item) return null;
-  return convertMessagesToModelMessages([item]);
-};
-
+/** Text of the first user message. */
 export const getFirstUserInput = (messages: Array<UIMessage | ModelMessage>) => {
-  let item: ModelMessage | UIMessage | null = null;
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message.role === "user") {
-      item = message;
-      break;
-    }
-  }
-  if (!item) return "";
-  const typedItem = item as UIMessage;
-  if (typedItem.parts) {
-    return typedItem.parts.map((i) => (i.type === "text" ? i.content : "")).join("\n");
-  } else {
-    return extractTextFromContent((item as ModelMessage)["content"]);
-  }
+  const item = findUserMessage(messages, "first");
+  return item ? userMessageText(item) : "";
 };
