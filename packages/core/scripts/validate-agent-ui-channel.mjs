@@ -511,7 +511,7 @@ assert.equal(tcRetryChannel.getMessages().length, 2, "leading user messages surv
 assert.equal(tcRetryChannel.getMessages()[0].parts[0].content, "<ctx kind=current_date>\nnow\n</ctx>");
 assert.equal(tcRetryChannel.getMessages()[1].parts[0].content, "find the test framework");
 
-// failRun clears everything including summary subscription state
+// failRun keeps the seeded prompt (+ optional error message) and clears summary state
 const failChannel = new AgentUIChannel({
   initialMessages: [
     {
@@ -532,7 +532,27 @@ failChannel.setMessages([
   },
 ]);
 failChannel.failRun();
-assert.equal(failChannel.getMessages().length, 0);
+assert.equal(failChannel.getMessages().length, 1, "failRun keeps the seeded user prompt");
+assert.equal(failChannel.getMessages()[0].id, "user-fail");
 assert.equal(failChannel.getTaskRunPhase(), "tools");
+
+// failRun records the failure message after the kept prompt
+const failErrorChannel = new AgentUIChannel({
+  initialMessages: [
+    {
+      id: "user-fail-error",
+      role: "user",
+      parts: [{ type: "text", content: "x" }],
+      createdAt: new Date(),
+    },
+  ],
+});
+failErrorChannel.failRun("boom");
+const failErrorMessages = failErrorChannel.getMessages();
+assert.equal(failErrorMessages.length, 2, "failRun appends an error message after the prompt");
+assert.equal(failErrorMessages[0].id, "user-fail-error");
+assert.equal(failErrorMessages[1].role, "assistant");
+assert.match(failErrorMessages[1].parts[0].content, /boom/);
+assert.equal(failErrorChannel.getTaskRunPhase(), "tools");
 
 console.log("agent-ui-channel validation passed");

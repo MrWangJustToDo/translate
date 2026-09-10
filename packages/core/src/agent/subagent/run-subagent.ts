@@ -64,6 +64,17 @@ export function destroySubagent(manager: AgentManager, subagentId: string) {
   manager.destroyAgent(subagentId);
 }
 
+/** Human-readable message from a subagent run failure (best effort). */
+function extractRunErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name || "Subagent run failed";
+  if (typeof err === "string") return err || "Subagent run failed";
+  if (err && typeof err === "object" && "message" in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string" && message) return message;
+  }
+  return "Subagent run failed";
+}
+
 async function executeSubagentRun(config: SubagentConfig, manager: AgentManager): Promise<SubagentResult> {
   const {
     subagentId: customId,
@@ -215,19 +226,34 @@ async function executeSubagentRun(config: SubagentConfig, manager: AgentManager)
         previewMessages = channel?.getMessages() ?? previewMessages;
         output = extractAssistantText(previewMessages)?.trim() || "(no summary)";
       } else {
-        // Non-abort failure: clear the subagent's partial history and roll the
-        // task-tool phase back out of `summary` so the preview does not linger on
-        // stale tool rows / summary text after a failed run.
+        const errorMessage = extractRunErrorMessage(err);
+        // Non-abort failure: surface a real terminal state before propagating.
+        // Keep the task prompt + record the error in the preview (so the detail
+        // view never spins on an empty transcript), flip the subagent status to
+        // `error`, and emit `subagent:error`. The throw below skips the normal
+        // outcome/telemetry path, so without this the task lingers as `running`
+        // (e.g. after 429 retries are exhausted).
         try {
-          channel.failRun();
+          channel.failRun(errorMessage);
         } catch {
           // ignore cleanup errors while propagating the run failure
+        }
+        try {
+          subagentManaged.statusController.applyRunOutcome({
+            kind: "error",
+            messages: previewMessages,
+            path: "detached",
+            errorMessage,
+          });
+        } catch {
+          // ignore status errors while propagating the run failure
         }
         try {
           subagentManaged.finalizeRun(manager, "error");
         } catch {
           // ignore finalize errors while propagating the run failure
         }
+        subagent.emitEvent("subagent:error", { subagentId, error: errorMessage }, { parentId: parentAgentId });
         throw err;
       }
     }

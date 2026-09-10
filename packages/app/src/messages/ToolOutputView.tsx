@@ -59,6 +59,10 @@ export const ToolOutputView = ({ part, uiState }: { part: ToolCallPart; uiState:
   const isBuiltinDetailed = DETAILED_OUTPUT_TOOLS.has(toolName);
   const output = formatToolOutput(part.output, toolName);
 
+  // Error outputs carry `{ error }` (no formattable body) — the message is
+  // rendered by ToolCallPartView, so skip the otherwise-empty result block.
+  if (uiState === "output-error" && !output.trim()) return null;
+
   // Extension (and other) tools: show the default block only when toUI produced non-empty text.
   if (!isBuiltinDetailed) {
     if (!getToUI(toolName) || !output.trim()) return null;

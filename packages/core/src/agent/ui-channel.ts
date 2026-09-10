@@ -4,6 +4,8 @@
 
 import { StreamProcessor } from "@tanstack/ai";
 
+import { generateId } from "../utils/generate-id.js";
+
 import { repairMessagesSnapshotChunk } from "./media/repair-stringified-multimodal.js";
 import { applyToolDenialReason } from "./stream/apply-tool-denial-reason.js";
 import { stripEmptyAssistantShells } from "./stream/empty-assistant-shell.js";
@@ -228,14 +230,36 @@ export class AgentUIChannel {
   }
 
   /**
-   * Clear channel history and reset summary streaming state after a failed run.
+   * Reset channel history after a failed run: drop stale partial tool rows /
+   * summary text, keep the seeded task prompt, and optionally append a synthetic
+   * assistant message describing the failure.
    *
    * Used by subagent runners so a failed (non-aborted) run does not leave stale
-   * partial tool rows / summary text in the preview, and so the task-tool phase
-   * rolls back out of `summary`. Aborted runs intentionally keep partial work.
+   * work in the preview — while still keeping the prompt so the detail view never
+   * spins forever on an empty transcript (e.g. 429 retries exhausted). Aborted
+   * runs intentionally keep partial work.
    */
-  failRun(): void {
-    this.clearMessages();
+  failRun(errorMessage?: string): void {
+    // Keep ALL leading user messages — subagent channels may hold leading
+    // synthetic <ctx kind=...> user messages around the real task prompt, so
+    // keeping only the first user message could drop the prompt itself.
+    const kept: TanStackUIMessage[] = [];
+    for (const message of this.getMessages()) {
+      if (message.role !== "user") break;
+      kept.push(message);
+    }
+
+    if (errorMessage) {
+      kept.push({
+        id: generateId("msg"),
+        role: "assistant",
+        parts: [{ type: "text", content: `⚠️ Task failed: ${errorMessage}` }],
+        createdAt: new Date(),
+      });
+    }
+
+    this.setMessages(kept);
+    this.currentTurnMessageId = undefined;
     this.endSummaryStream();
   }
 
