@@ -5,11 +5,7 @@
  */
 import assert from "node:assert/strict";
 
-import {
-  AGENT_SESSION_CHANNELS,
-  DEFAULT_AGENT_SESSION_CHANNELS,
-  DEFAULT_SESSION_LIFECYCLE_EVENTS,
-} from "../dist/dev.mjs";
+import { AGENT_EVENT_META, AGENT_SESSION_CHANNELS, DEFAULT_AGENT_SESSION_CHANNELS } from "../dist/dev.mjs";
 
 assert.ok(AGENT_SESSION_CHANNELS.includes("state"));
 assert.ok(AGENT_SESSION_CHANNELS.includes("tool"));
@@ -57,8 +53,13 @@ const event = {
 };
 assert.deepEqual(JSON.parse(JSON.stringify(event)), event);
 
-assert.ok(DEFAULT_SESSION_LIFECYCLE_EVENTS.includes("agent:stop"));
-assert.ok(!DEFAULT_SESSION_LIFECYCLE_EVENTS.includes("plan:enter"));
-assert.ok(!DEFAULT_SESSION_LIFECYCLE_EVENTS.includes("subagent:ui-update"));
+// The lifecycle channel is now derived from AGENT_EVENT_META (replacing the
+// former DEFAULT_SESSION_LIFECYCLE_EVENTS include-list).
+const lifecycleEvents = Object.entries(AGENT_EVENT_META)
+  .filter(([, meta]) => meta.channel === "lifecycle")
+  .map(([type]) => type);
+assert.ok(lifecycleEvents.includes("agent:stop"));
+assert.ok(!lifecycleEvents.includes("plan:enter"));
+assert.ok(!lifecycleEvents.includes("subagent:ui-update"));
 
 console.log("agent-session-types validation passed");

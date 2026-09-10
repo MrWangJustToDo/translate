@@ -52,6 +52,7 @@
     "validate:local-agent-session": "pnpm run build && node scripts/validate-local-agent-session.mjs",
     "validate:agent-session-host": "pnpm run build && node scripts/validate-agent-session-host.mjs",
     "validate:run-agent-skeleton": "pnpm run build && node scripts/validate-run-agent-skeleton.mjs",
+    "validate:agent-event-bus": "pnpm run build && node scripts/validate-agent-event-bus.mjs",
     "validate:emit-agent-event": "pnpm run build && node scripts/validate-emit-agent-event.mjs",
     "validate:agent-event-envelope": "pnpm run build && node scripts/validate-agent-event-envelope.mjs",
     "validate:event-log-bridge": "pnpm run build && node scripts/validate-event-log-bridge.mjs",

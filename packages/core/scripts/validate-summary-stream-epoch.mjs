@@ -14,7 +14,7 @@
 
 import assert from "node:assert/strict";
 
-import { SummaryStreamHub, summaryStreamKey } from "../dist/dev.mjs";
+import { SummaryStreamHub, createAgentEventBus, summaryStreamKey } from "../dist/dev.mjs";
 
 // --- plain append after end is still ignored (existing contract) ---
 {
@@ -31,11 +31,13 @@ import { SummaryStreamHub, summaryStreamKey } from "../dist/dev.mjs";
 // --- multi-pass flow: pass 1 resets, later passes append contiguously ---
 {
   const hub = new SummaryStreamHub();
+  const bus = createAgentEventBus();
+  hub.setEventBus(bus);
   const key = summaryStreamKey("compact", "agent_root");
   const epoch = "cmpepoch_shared";
   /** @type {import("../dist/dev.mjs").SummaryStreamEvent[]} */
   const events = [];
-  const unsub = hub.subscribe((e) => events.push(e));
+  const unsub = bus.on("session:summary", (event) => events.push(event.payload));
 
   /**
    * Simulate one summarizer pass (run-subagent → runAgentOnce → consumeRun).

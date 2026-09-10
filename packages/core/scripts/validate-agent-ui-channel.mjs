@@ -7,7 +7,7 @@
 import { EventType } from "@tanstack/ai/client";
 import assert from "node:assert/strict";
 
-import { AgentUIChannel, SummaryStreamHub, summaryStreamKey } from "../dist/dev.mjs";
+import { AgentUIChannel, SummaryStreamHub, createAgentEventBus, summaryStreamKey } from "../dist/dev.mjs";
 
 const threadId = "thread-ui";
 const runId = "run-ui";
@@ -95,13 +95,15 @@ const channel = new AgentUIChannel({
   },
 });
 
+const channelBus = createAgentEventBus();
+channel.setEventBus(channelBus);
 let updateCount = 0;
-const unsubscribe = channel.subscribe(() => {
+const unsubscribe = channelBus.on("session:messages", () => {
   updateCount++;
 });
 
 const messages = await channel.consumeRun({ stream: mockRunStream() });
-assert.ok(updateCount >= 1, "subscribe should receive message updates");
+assert.ok(updateCount >= 1, "session:messages bus events should fire on message updates");
 
 unsubscribe();
 
@@ -189,9 +191,11 @@ const summaryMsgId = "assistant-summary";
 const longText = "x".repeat(200);
 
 const summaryHub = new SummaryStreamHub();
+const summaryBus = createAgentEventBus();
+summaryHub.setEventBus(summaryBus);
 /** @type {import("../dist/dev.mjs").SummaryStreamEvent[]} */
 const summaryEvents = [];
-const unsubSummary = summaryHub.subscribe((event) => summaryEvents.push(event));
+const unsubSummary = summaryBus.on("session:summary", (event) => summaryEvents.push(event.payload));
 
 const summaryChannel = new AgentUIChannel();
 await summaryChannel.consumeRun({
@@ -273,10 +277,12 @@ unsubSummary();
 // ============================================================================
 
 const monoHub = new SummaryStreamHub();
+const monoBus = createAgentEventBus();
+monoHub.setEventBus(monoBus);
 /** @type {string[]} */
 const monoAppends = [];
-const unsubMono = monoHub.subscribe((event) => {
-  if (event.type === "append") monoAppends.push(event.chunk);
+const unsubMono = monoBus.on("session:summary", (event) => {
+  if (event.payload.type === "append") monoAppends.push(event.payload.chunk);
 });
 
 const monoBase = "B".repeat(80);
@@ -353,10 +359,12 @@ unsubMono();
 // ============================================================================
 
 const retryHub = new SummaryStreamHub();
+const retryBus = createAgentEventBus();
+retryHub.setEventBus(retryBus);
 /** @type {Array<{ type: string }>} */
 const retryEvents = [];
-const unsubRetry = retryHub.subscribe((event) => {
-  retryEvents.push({ type: event.type });
+const unsubRetry = retryBus.on("session:summary", (event) => {
+  retryEvents.push({ type: event.payload.type });
 });
 
 const retryChannel = new AgentUIChannel({

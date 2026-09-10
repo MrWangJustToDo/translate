@@ -14,6 +14,7 @@ import {
   PlanModeController,
   TodoManager,
   buildPlanModeRetroPrompt,
+  createAgentEventBus,
   extractGoalFromPlanMarkdown,
   formatPlanSummary,
 } from "../dist/dev.mjs";
@@ -51,6 +52,9 @@ const controller = new PlanModeController({
   emitEvent: (type, data) => events.push({ type, data }),
   getTodoManager: () => todoManager,
 });
+const bus = createAgentEventBus();
+todoManager.setEventBus(bus);
+controller.setEventBus(bus);
 
 controller.enable();
 assert.equal(controller.getPhase(), "planning");
@@ -95,6 +99,9 @@ const c2 = new PlanModeController({
   emitEvent: () => {},
   getTodoManager: () => todo2,
 });
+const bus2 = createAgentEventBus();
+todo2.setEventBus(bus2);
+c2.setEventBus(bus2);
 c2.enable();
 await c2.applyStructuredPlan({
   goal: "Source check",
@@ -114,6 +121,9 @@ const c3 = new PlanModeController({
   emitEvent: () => {},
   getTodoManager: () => todo3,
 });
+const bus3 = createAgentEventBus();
+todo3.setEventBus(bus3);
+c3.setEventBus(bus3);
 c3.enable();
 await c3.applyStructuredPlan({
   goal: "Title drift",

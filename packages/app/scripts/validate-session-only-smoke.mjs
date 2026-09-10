@@ -39,7 +39,7 @@ try {
   assert.ok(Array.isArray(snap.mcp.servers));
   assert.ok(Array.isArray(snap.extensions.extensions));
 
-  assert.equal((await session.dispatch({ type: "plan.toggle" })).ok, true);
+  assert.equal((await session.dispatch({ type: "mode.toggle" })).ok, true);
   assert.equal((await session.dispatch({ type: "plan.list" })).ok, true);
   assert.equal((await session.dispatch({ type: "mcp.refresh" })).ok, true);
 

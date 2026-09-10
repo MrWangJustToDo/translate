@@ -5,7 +5,10 @@
  */
 import assert from "node:assert/strict";
 
-import { AgentLog, Emitter, TodoManager, UsageTracker } from "../dist/dev.mjs";
+import { createAgentEventBus, Emitter, TodoManager, UsageTracker } from "../dist/dev.mjs";
+
+// --- AgentLog (persistence-only: no in-memory emitter, entries go to the sink) ---
+import { createLogCapture, sleep } from "./helpers/log-capture.mjs";
 
 // --- primitive ---
 const emitter = new Emitter();
@@ -20,27 +23,39 @@ emitter.emit("ping", { n: 3 });
 assert.deepEqual(seen, [{ n: 1 }, { n: 2 }]);
 assert.equal(emitter.listenerCount("ping"), 0);
 
-// --- TodoManager ---
+// --- TodoManager (session `todos` projection on the unified bus) ---
+const todosBus = createAgentEventBus();
 const todos = new TodoManager();
+todos.setEventBus(todosBus);
 /** @type {unknown[]} */
 const todoPayloads = [];
-const unsubTodos = todos.on("change", (items) => {
-  todoPayloads.push(items);
-});
+const unsubTodos = todosBus.on(
+  "session:todos",
+  (event) => {
+    todoPayloads.push(event.payload);
+  },
+  { replay: false }
+);
 todos.update([{ content: "a", status: "pending", priority: "medium" }], "t1");
 assert.equal(todoPayloads.length, 1);
-assert.equal(todoPayloads[0][0].content, "a");
+assert.equal(todoPayloads[0].items[0].content, "a");
 unsubTodos();
 todos.update([{ content: "b", status: "pending", priority: "medium" }], "t2");
 assert.equal(todoPayloads.length, 1);
 
-// --- UsageTracker ---
+// --- UsageTracker (session `usage` projection on the unified bus) ---
+const usageBus = createAgentEventBus();
 const usage = new UsageTracker();
+usage.setEventBus(usageBus);
 /** @type {unknown[]} */
 const usagePayloads = [];
-const unsubUsage = usage.on("change", (snap) => {
-  usagePayloads.push(snap);
-});
+const unsubUsage = usageBus.on(
+  "session:usage",
+  (event) => {
+    usagePayloads.push(event.payload);
+  },
+  { replay: false }
+);
 usage.updateWindowUsage({
   inputTokens: 10,
   outputTokens: 5,
@@ -53,9 +68,6 @@ assert.equal(usagePayloads[0].window.inputTokens, 10);
 unsubUsage();
 usage.addTotal({ inputTokens: 1, outputTokens: 1, totalTokens: 2 });
 assert.equal(usagePayloads.length, 1);
-
-// --- AgentLog (persistence-only: no in-memory emitter, entries go to the sink) ---
-import { createLogCapture, sleep } from "./helpers/log-capture.mjs";
 
 const capture = await createLogCapture("agent-emitter");
 assert.equal(typeof capture.log.on, "undefined", "AgentLog has no event emitter (persistence-only)");

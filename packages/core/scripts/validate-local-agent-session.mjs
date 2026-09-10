@@ -4,23 +4,34 @@
  * Run: pnpm --filter @my-agent/core run validate:local-agent-session
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
+  AgentUIChannel,
   SummaryStreamHub,
   TodoManager,
   UsageTracker,
+  createAgentEventBus,
   createLocalAgentSession,
+  registerCoreEnv,
   sessionForSubagent,
 } from "../dist/dev.mjs";
+import { AgentManager } from "../dist/index.mjs";
 
 function createFake(id, parentId) {
   const usage = new UsageTracker();
   const todoManager = new TodoManager();
+  const bus = createAgentEventBus(id);
+  usage.setEventBus(bus);
+  todoManager.setEventBus(bus);
   /** @type {any} */
   const managed = {
     id,
     name: id,
     parentId,
+    getEventBus: () => bus,
     status: "idle",
     error: "",
     pendingApprovalCount: 0,
@@ -248,5 +259,97 @@ const withSubs = rootWithChildren.getSnapshot();
 assert.equal(withSubs.subagents.length, 1);
 assert.equal(withSubs.subagents[0].id, "agent_child");
 assert.ok(withSubs.subagents[0].usage);
+
+// ----------------------------------------------------------------------------
+// Subagent preview channel → child session `messages` projection (regression).
+// `ManagedAgent.setUIChannel` must wire the channel's scoped bus. Without it a
+// subagent preview channel (created via `ensureUIChannel`, NOT through the chat
+// controller) never emits `session:messages`, so the child session's `messages`
+// channel stays frozen while the main session updates fine.
+// ----------------------------------------------------------------------------
+{
+  const rootPath = await fs.promises.mkdtemp(path.join(os.tmpdir(), "local-session-messages-"));
+  const toAbs = (p) => (path.isAbsolute(p) ? p : path.join(rootPath, p));
+  registerCoreEnv({
+    rootPath,
+    getPlatform: async () => "linux",
+    getArch: async () => "arm64",
+    getEnv: async () => ({}),
+    homedir: async () => rootPath,
+    fs: {
+      readFile: async (p, encoding) => fs.promises.readFile(toAbs(p), encoding),
+      writeFile: async (p, content) => fs.promises.writeFile(toAbs(p), content),
+      appendFile: async (p, content) => fs.promises.appendFile(toAbs(p), content, "utf8"),
+      mkdir: async (p) => fs.promises.mkdir(toAbs(p), { recursive: true }),
+      exists: async (p) =>
+        fs.promises.access(toAbs(p)).then(
+          () => true,
+          () => false
+        ),
+      readdir: async (p) => {
+        try {
+          const entries = await fs.promises.readdir(toAbs(p), { withFileTypes: true });
+          return entries.map((e) => ({ name: e.name, type: e.isDirectory() ? "directory" : "file" }));
+        } catch {
+          return [];
+        }
+      },
+      stat: async (p) => {
+        const st = await fs.promises.stat(toAbs(p));
+        return { isDirectory: st.isDirectory(), isFile: st.isFile(), size: st.size, mtime: st.mtime };
+      },
+      remove: async (p) => fs.promises.rm(toAbs(p), { recursive: true, force: true }),
+    },
+    runCommand: async () => ({ stdout: "", stderr: "", code: 0 }),
+    exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+    fetch: async () => new Response(),
+  });
+
+  const e2eManager = new AgentManager();
+  const parent = await e2eManager.createManagedAgent({ name: "root-messages", model: "test-model" });
+  const sub = await e2eManager.spawnSubagent(parent.id, { name: "sub-messages" });
+  const subManaged = e2eManager.getAgent(sub.id);
+  assert.ok(subManaged, "subagent managed agent exists");
+
+  const userMsg = {
+    id: "m_user",
+    role: "user",
+    parts: [{ type: "text", content: "explore" }],
+    createdAt: new Date(),
+  };
+  const channel = new AgentUIChannel({ initialMessages: [userMsg] });
+  subManaged.setUIChannel(channel); // ← the fix under test (ensureUIChannel path)
+
+  const childSession = createLocalAgentSession({ managed: subManaged, manager: e2eManager });
+  /** @type {unknown[]} */
+  const messageEvents = [];
+  const unsubMessages = childSession.subscribe(
+    (event) => {
+      if (event.channel === "messages") messageEvents.push(event.payload);
+    },
+    { channels: ["messages"] }
+  );
+
+  // `setUIChannel` wired the bus → the retained `session:messages` replay
+  // delivers the initial snapshot to a late subscriber (panel open case).
+  assert.ok(messageEvents.length >= 1, "initial messages snapshot replayed on subscribe");
+
+  const assistantMsg = {
+    id: "m_asst",
+    role: "assistant",
+    parts: [{ type: "text", content: "found it" }],
+    createdAt: new Date(),
+  };
+  channel.setMessages([userMsg, assistantMsg]); // StreamProcessor onMessagesChange → session:messages
+  assert.ok(
+    messageEvents.some((payload) => JSON.stringify(payload).includes("found it")),
+    "subagent channel messages reach the child session messages channel"
+  );
+  unsubMessages();
+
+  e2eManager.destroyAgent(sub.id);
+  e2eManager.destroyAgent(parent.id);
+  await fs.promises.rm(rootPath, { recursive: true, force: true });
+}
 
 console.log("local-agent-session validation passed");

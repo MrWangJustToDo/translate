@@ -14,6 +14,7 @@
  *
  * Run: pnpm --filter @my-agent/server run validate:agent-session-channels
  */
+/* eslint-disable no-undef */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,6 +27,10 @@ process.env.SANDBOX_ENV = "native";
 const { createServer } = await import("../dist/index.mjs");
 const { createRemoteAgentSessionHost } = await import("../dist/remote-session-host.mjs");
 const { RemoteSessionClient } = await import("../dist/remote-session-client.mjs");
+
+// The server externalizes `@my-agent/core`, so this import resolves to the SAME
+// module instances the server uses internally (shared agentManager / bus).
+const { agentManager, summaryStreamKey } = await import(new URL("../../core/dist/index.mjs", import.meta.url).href);
 
 const waitFor = async (label, fn, timeoutMs = 6000) => {
   const start = Date.now();
@@ -66,17 +71,17 @@ assert.ok(Array.isArray(session.getSnapshot().mcp.servers), "snapshot.mcp.server
 
 // ── 2. auto.toggle → mode event + snapshot.autoMode flips ──
 const beforeAuto = session.getSnapshot().autoMode;
-const autoRes = await session.dispatch({ type: "auto.toggle" });
+const autoRes = await session.dispatch({ type: "mode.set", mode: "auto" });
 assert.equal(autoRes.ok, true);
 await waitFor("mode event + autoMode flip", () => seen.has("mode") && session.getSnapshot().autoMode !== beforeAuto);
 
 // ── 3. plan.enable → mode === "plan" ──
-const planOn = await session.dispatch({ type: "plan.enable" });
+const planOn = await session.dispatch({ type: "mode.set", mode: "plan" });
 assert.equal(planOn.ok, true);
 await waitFor("snapshot.mode === plan", () => session.getSnapshot().mode === "plan");
 
 // ── 4. plan.disable → mode === "normal" ──
-const planOff = await session.dispatch({ type: "plan.disable" });
+const planOff = await session.dispatch({ type: "mode.set", mode: "normal" });
 assert.equal(planOff.ok, true);
 await waitFor("snapshot.mode === normal", () => session.getSnapshot().mode === "normal");
 
@@ -107,7 +112,7 @@ const stateOnly = session.subscribe(
   { channels: ["state"] }
 );
 await waitFor("state-only SSE live", () => stateOnlyChannels.length > 0);
-await session.dispatch({ type: "auto.toggle" }); // emits a mode event
+await session.dispatch({ type: "mode.set", mode: "auto" }); // emits a mode event
 await new Promise((resolve) => setTimeout(resolve, 200));
 assert.ok(!stateOnlyChannels.includes("mode"), "state-only subscriber must not receive mode events");
 stateOnly();
@@ -123,7 +128,7 @@ const temp = session.subscribe(
 await waitFor("temp SSE live", () => postUnsub > 0); // initial state event proves the stream is live
 temp();
 const countAfterUnsub = postUnsub;
-await session.dispatch({ type: "auto.toggle" });
+await session.dispatch({ type: "mode.toggle" });
 await new Promise((resolve) => setTimeout(resolve, 200));
 assert.equal(postUnsub, countAfterUnsub, "unsubscribed handler must not receive events");
 
@@ -139,12 +144,76 @@ assert.equal(postUnsub, countAfterUnsub, "unsubscribed handler must not receive 
   );
   await waitFor("client SSE live", () => clientSeen.has("state"));
   const before = client.getSnapshot().autoMode;
-  await session.dispatch({ type: "auto.toggle" });
+  await session.dispatch({ type: "mode.set", mode: before ? "normal" : "auto" });
   await waitFor("client snapshot autoMode flip", () => client.getSnapshot().autoMode !== before);
   assert.ok(
     ["normal", "plan", "auto"].includes(client.getSnapshot().mode),
     `mode valid (got ${client.getSnapshot().mode})`
   );
+  clientUnsub();
+}
+
+// ── 9. tool + summary channels end-to-end (unified bus → session projection → SSE) ──
+// Drives the server-side agent's scoped bus directly (tool:chunk / tool:clear,
+// session:summary via the shared SummaryStreamHub) and asserts the client sees
+// the projected `tool` / `summary` session events.
+{
+  const agentId = session.getSnapshot().agentId;
+  const managed = agentManager.getAgent(agentId);
+  assert.ok(managed, "server agent is registered in the shared core agentManager");
+
+  const client = new RemoteSessionClient({ baseUrl, agentId });
+  /** @type {Array<{channel: string; payload: any}>} */
+  const live = [];
+  const clientUnsub = client.subscribe((event) => live.push(event), { channels: ["tool", "summary", "state"] });
+  // tool/summary carry no retained value — wait for the retained `state` replay
+  // first so the SSE subscription is mounted before we emit (events would
+  // otherwise be lost before the stream exists).
+  await waitFor("tool/summary SSE live", () => live.some((e) => e.channel === "state"));
+
+  const bus = managed.getEventBus();
+  assert.ok(bus, "managed agent has a scoped unified bus");
+
+  // Command stream: run_command → emitStreamingChunk → tool:chunk / tool:clear.
+  // (The streaming-callback bridge itself is covered by core validate:streaming-scope;
+  // here we drive the scoped bus to exercise the full session projection + SSE hop.)
+  bus.emit("tool:chunk", {
+    kind: "chunk",
+    chunk: { toolCallId: "e2e-run", type: "stdout", chunk: "hello e2e" },
+  });
+  bus.emit("tool:clear", { kind: "clear", toolCallId: "e2e-run" });
+
+  // Task summary stream: SummaryStreamHub (parent-managed) → session:summary.
+  const taskKey = summaryStreamKey("task", "e2e-task");
+  managed.summaryStreams.reset({ source: "task", toolCallId: "e2e-task" });
+  managed.summaryStreams.append(taskKey, "task text\n");
+  managed.summaryStreams.end(taskKey);
+
+  // Compact stream: same hub, `compact` source → compact banner events.
+  const compactKey = summaryStreamKey("compact", agentId);
+  managed.summaryStreams.reset({ source: "compact", compactId: agentId, label: "e2e compact" });
+  managed.summaryStreams.append(compactKey, "compact text");
+
+  await waitFor(
+    "tool + summary channels",
+    () =>
+      live.some((e) => e.channel === "tool" && e.payload.kind === "chunk" && e.payload.chunk.chunk === "hello e2e") &&
+      live.some((e) => e.channel === "tool" && e.payload.kind === "clear" && e.payload.toolCallId === "e2e-run") &&
+      live.some((e) => e.channel === "summary" && e.payload.type === "reset" && e.payload.source === "task") &&
+      live.some((e) => e.channel === "summary" && e.payload.type === "append")
+  );
+
+  // Late-read fallback: the summary-streams endpoint still serves current hub
+  // text (remote clients keep a local summaryCache fed by SSE events only).
+  const summaryRes = await fetch(`${baseUrl}/api/agent/${agentId}/summary-streams`);
+  assert.equal(summaryRes.status, 200);
+  const { snapshots } = await summaryRes.json();
+  const compSnap = snapshots.find((s) => s.key === compactKey);
+  assert.ok(
+    compSnap && String(compSnap.pendingLine ?? "").includes("compact text"),
+    `compact summary snapshot readable via HTTP (got ${JSON.stringify(compSnap)})`
+  );
+
   clientUnsub();
 }
 

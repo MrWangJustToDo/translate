@@ -11,6 +11,7 @@ import {
   applyAppendToDisplayWindow,
   applySummaryStreamAppend,
   compactSummaryStreamId,
+  createAgentEventBus,
   displayWindowFromSnapshot,
   emptySummaryDisplayWindow,
   emptySummaryLineBuffer,
@@ -51,9 +52,11 @@ import {
 // --- hub events + snapshot ---
 {
   const hub = new SummaryStreamHub();
+  const bus = createAgentEventBus();
+  hub.setEventBus(bus);
   /** @type {import("../dist/dev.mjs").SummaryStreamEvent[]} */
   const events = [];
-  const unsub = hub.subscribe((e) => events.push(e));
+  const unsub = bus.on("session:summary", (event) => events.push(event.payload));
 
   const key = summaryStreamKey("task", "tc-1");
   hub.reset({ source: "task", toolCallId: "tc-1" });

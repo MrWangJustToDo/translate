@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 
-import { PLAN_TODO_TITLE, PlanModeController, TodoManager } from "../dist/dev.mjs";
+import { PLAN_TODO_TITLE, PlanModeController, TodoManager, createAgentEventBus } from "../dist/dev.mjs";
 
 const events = [];
 const todoManager = new TodoManager();
@@ -14,6 +14,9 @@ const controller = new PlanModeController({
   emitEvent: (type, data) => events.push({ type, data }),
   getTodoManager: () => todoManager,
 });
+const bus = createAgentEventBus();
+todoManager.setEventBus(bus);
+controller.setEventBus(bus);
 
 assert.equal(controller.shouldAutoApproveTools(), false);
 
@@ -49,6 +52,9 @@ const restored = new PlanModeController({
   emitEvent: (type, data) => events.push({ type, data }),
   getTodoManager: () => restoredTodos,
 });
+const restoredBus = createAgentEventBus();
+restoredTodos.setEventBus(restoredBus);
+restored.setEventBus(restoredBus);
 assert.equal(restored.shouldAutoApproveTools(), false);
 
 restored.restoreState(snapshot);

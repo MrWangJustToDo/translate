@@ -9,18 +9,21 @@
 
 import assert from "node:assert/strict";
 
-import { AgentTelemetryBus, bridgeTelemetryToAgentLog } from "../dist/dev.mjs";
+import { createAgentEventBus, bridgeTelemetryToAgentLog } from "../dist/dev.mjs";
 
 import { createLogCapture, sleep } from "./helpers/log-capture.mjs";
 
 const capture = await createLogCapture("event-log-bridge");
 const { log, readEntries } = capture;
-const bus = new AgentTelemetryBus();
+const bus = createAgentEventBus();
 
 bridgeTelemetryToAgentLog(bus, () => log);
 
 async function emitAndRead(event) {
-  bus.emit(event);
+  bus.emit(event.type, event.payload, {
+    agentId: event.agentId,
+    ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
+  });
   await sleep(60);
   return readEntries();
 }
